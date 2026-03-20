@@ -46,6 +46,7 @@
             const [bookingConfirmed, setBookingConfirmed] = useState(false);
             const [isSyncing, setIsSyncing] = useState(false);
             const [errorMsg, setErrorMsg] = useState('');
+            const [errorType, setErrorType] = useState(null); // 'CORS' | 'API'
 
             const fetchWithRetry = async (url, options, retries = 3) => {
                 try {
@@ -56,8 +57,9 @@
                     }
                     return await response.json();
                 } catch (err) {
-                    if (err.name === 'TypeError') {
-                        throw new Error("連線被拒絕。請確認：\n1. 已在後台「H5 信任域名」加入 mardyhung.github.io\n2. 應用已發布最新版本\n3. 網址開頭是 https。");
+                    if (err.name === 'TypeError' || err.message.includes('fetch')) {
+                        setErrorType('CORS');
+                        throw new Error("Lark 伺服器安全性攔截 (CORS)。這是因為瀏覽器端禁止直接發送包含 App Secret 的請求。");
                     }
                     throw err;
                 }
@@ -76,6 +78,7 @@
                 if (!larkConfig.tableId) return;
                 setIsSyncing(true);
                 setErrorMsg('');
+                setErrorType(null);
                 try {
                     const token = await getLarkToken();
                     const res = await fetchWithRetry(`https://open.larksuite.com/open-apis/bitable/v1/apps/${larkConfig.appToken}/tables/${larkConfig.tableId}/records?page_size=100`, {
@@ -130,7 +133,7 @@
                 <div className="max-w-xl mx-auto my-10 bg-white rounded-[40px] shadow-2xl overflow-hidden border border-slate-100 min-h-[600px] flex flex-col animate-fade-in">
                     <div className="bg-slate-900 p-8 text-white flex justify-between items-center shrink-0">
                         <div>
-                            <h1 className="text-2xl font-black italic tracking-tighter">SKY VISION</h1>
+                            <h1 className="text-2xl font-black italic tracking-tighter italic">SKY VISION</h1>
                             <p className="text-[9px] font-bold opacity-40 uppercase tracking-widest italic">Smart Dispatcher</p>
                         </div>
                         <div className="flex gap-2">
@@ -142,22 +145,20 @@
                     </div>
 
                     <div className="flex-1 overflow-y-auto scrollbar-hide">
-                        {errorMsg && (
-                            <div className="m-6 p-6 bg-amber-50 border border-amber-200 rounded-3xl">
-                                <h4 className="text-amber-800 font-black text-sm mb-2 flex items-center gap-2">
-                                    <i className="fas fa-shield-alt"></i> 安全連線配置提醒
+                        {errorType === 'CORS' && (
+                            <div className="m-6 p-6 bg-red-50 border border-red-100 rounded-3xl animate-fade-in">
+                                <h4 className="text-red-800 font-black text-sm mb-3 flex items-center gap-2">
+                                    <i className="fas fa-shield-virus"></i> 技術安全性攔截 (CORS)
                                 </h4>
-                                <p className="text-[11px] text-amber-700 leading-relaxed mb-4">
-                                    {errorMsg}
-                                </p>
-                                <div className="bg-white p-4 rounded-2xl border border-amber-100">
-                                    <p className="text-[10px] font-bold text-slate-400 uppercase mb-2">解決方案步驟：</p>
-                                    <ol className="text-[10px] text-slate-600 space-y-1 list-decimal ml-4">
-                                        <li>在 Lark 應用後台進入<strong>「安全設置」</strong>。</li>
-                                        <li>不要點「IP 白名單」，請找<strong>「H5 信任域名」</strong>分頁。</li>
-                                        <li>填入 <code className="bg-slate-100 px-1 font-bold">https://mardyhung.github.io</code></li>
-                                        <li>前往<strong>「版本管理與發佈」</strong>點擊<strong>「申請發佈」</strong>。</li>
-                                    </ol>
+                                <div className="space-y-4 text-[11px] text-red-700 leading-relaxed font-medium">
+                                    <p>周董，您雖然已經在後台設定好網域，但 Lark 伺服器為了保護您的 <strong>App Secret</strong>，禁止瀏覽器直接進行權限驗證。</p>
+                                    <div className="bg-white p-4 rounded-2xl border border-red-50">
+                                        <p className="font-black mb-2 text-slate-800 uppercase">解決建議：</p>
+                                        <ol className="list-decimal ml-4 space-y-2">
+                                            <li><strong>使用 Lark 工作台</strong>：將此 HTML 網址配置到 Lark 應用的「網頁應用」中，並在 Lark 電腦版或手機版中打開，體驗會最穩定。</li>
+                                            <li><strong>建立後端中轉</strong>：將獲取 Token 的邏輯移至伺服器端執行（如 Cloud Functions），這是最符合工業標準的做法。</li>
+                                        </ol>
+                                    </div>
                                 </div>
                             </div>
                         )}
@@ -192,7 +193,7 @@
                                         })}
                                     </div>
                                 </div>
-                                <button disabled={!selectedSlot || !userName || isSyncing} onClick={handleBooking} className={`w-full py-6 rounded-[2.5rem] font-black text-xl shadow-2xl transition-all flex items-center justify-center gap-3 ${!selectedSlot || !userName || isSyncing ? 'bg-slate-100 text-slate-300' : 'bg-blue-600 text-white hover:bg-blue-700'}`}>
+                                <button disabled={!selectedSlot || !userName || isSyncing} onClick={handleBooking} className={`w-full py-6 rounded-[2.5rem] font-black text-xl shadow-2xl transition-all flex items-center justify-center gap-3 ${!selectedSlot || !userName || isSyncing ? 'bg-slate-100 text-slate-300' : 'bg-blue-600 text-white hover:bg-blue-700 shadow-blue-100'}`}>
                                     {isSyncing ? <i className="fas fa-spinner animate-spin"></i> : '立即確認預約'}
                                 </button>
                             </div>
