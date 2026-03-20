@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover">
-    <title>Sky Vision 按摩預約調度 v12.3</title>
+    <title>Sky Vision 按摩預約系統 v12.5</title>
     <!-- 核心框架 -->
     <script src="https://unpkg.com/react@18/umd/react.production.min.js"></script>
     <script src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js"></script>
@@ -14,7 +14,6 @@
         import { initializeApp } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-app.js";
         import { getFirestore, collection, doc, setDoc, onSnapshot, deleteDoc, query, addDoc, updateDoc, getDoc } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-firestore.js";
         import { getAuth, signInAnonymously, onAuthStateChanged, signInWithCustomToken } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-auth.js";
-
         window.fb = { initializeApp, getFirestore, collection, doc, setDoc, onSnapshot, deleteDoc, query, addDoc, updateDoc, getDoc, getAuth, signInAnonymously, onAuthStateChanged, signInWithCustomToken };
     </script>
     <link href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.0.0/css/all.min.css" rel="stylesheet">
@@ -22,18 +21,17 @@
         @import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;700;900&family=Noto+Sans+TC:wght@400;700;900&display=swap');
         body { 
             font-family: 'Inter', 'Noto Sans TC', sans-serif; 
-            background-color: #f1f5f9; 
-            margin: 0;
-            padding: 0;
+            background-color: #f8fafc; 
+            margin: 0; padding: 0;
             -webkit-tap-highlight-color: transparent;
         }
         .scrollbar-hide::-webkit-scrollbar { display: none; }
-        .animate-up { animation: fadeInUp 0.6s cubic-bezier(0.16, 1, 0.3, 1); }
-        @keyframes fadeInUp { from { opacity: 0; transform: translateY(40px); } to { opacity: 1; transform: translateY(0); } }
-        .custom-shadow { box-shadow: 0 40px 100px -20px rgba(15, 23, 42, 0.15), 0 20px 40px -10px rgba(15, 23, 42, 0.1); }
+        .animate-up { animation: fadeInUp 0.8s cubic-bezier(0.2, 1, 0.3, 1); }
+        @keyframes fadeInUp { from { opacity: 0; transform: translateY(60px); } to { opacity: 1; transform: translateY(0); } }
+        .custom-shadow { box-shadow: 0 40px 100px -20px rgba(15, 23, 42, 0.12), 0 20px 40px -10px rgba(15, 23, 42, 0.08); }
         .booking-btn:active { transform: scale(0.96); }
-        /* 優化手機版內縮空間，防止切邊 */
-        .page-wrapper { padding: 24px 24px 60px 24px; min-height: 100vh; display: flex; flex-direction: column; align-items: center; }
+        /* 徹底解決切邊問題：加大全局呼吸空間 */
+        .page-wrapper { padding: 40px 24px 100px 24px; min-height: 100vh; display: flex; flex-direction: column; align-items: center; }
     </style>
 </head>
 <body>
@@ -44,24 +42,23 @@
 
         const App = () => {
             const ADMIN_PASSWORD = "23128951";
-            const appId = typeof __app_id !== 'undefined' ? __app_id : 'sky-vision-global-node';
+            const appId = typeof __app_id !== 'undefined' ? __app_id : 'sky-vision-auto-sync';
 
-            // --- 基礎狀態 ---
-            const [user, setUser] = useState(null);
+            // --- 狀態控制 ---
             const [db, setDb] = useState(null);
+            const [user, setUser] = useState(null);
             const [isAdmin, setIsAdmin] = useState(false);
             const [showAdminLogin, setShowAdminLogin] = useState(false);
             const [pwd, setPwd] = useState('');
-            const [isBooting, setIsBooting] = useState(true);
-            const [needsConfig, setNeedsConfig] = useState(false);
-            const [manualConfig, setManualConfig] = useState('');
+            const [cloudEnabled, setCloudEnabled] = useState(false);
 
-            // --- 業務資料 ---
-            const [availableDates, setAvailableDates] = useState([]);
-            const [bookings, setBookings] = useState([]);
-            const [settings, setSettings] = useState({ startTime: "18:30", endTime: "23:00" });
+            // --- 業務資料 (優先從本地讀取，實現全自動秒開) ---
+            const [availableDates, setAvailableDates] = useState(() => JSON.parse(localStorage.getItem('sv_dates') || '[]'));
+            const [bookings, setBookings] = useState(() => JSON.parse(localStorage.getItem('sv_bookings') || '[]'));
+            const [settings, setSettings] = useState(() => JSON.parse(localStorage.getItem('sv_settings') || '{"startTime":"18:30","endTime":"23:00"}'));
+            const [manualConfig, setManualConfig] = useState(() => localStorage.getItem('sv_fb_config') || '');
 
-            // --- 表單狀態 ---
+            // --- 預約表單狀態 ---
             const [selectedDate, setSelectedDate] = useState('');
             const [selectedDuration, setSelectedDuration] = useState(30);
             const [userName, setUserName] = useState('');
@@ -70,15 +67,16 @@
             const [newDateInput, setNewDateInput] = useState('');
             const [isSyncing, setIsSyncing] = useState(false);
 
-            // --- 雲端初始化核心 ---
-            const initFirebase = async (configString) => {
+            // --- 雲端初始化程序 (全自動判斷) ---
+            const initCloud = async (configStr) => {
+                if(!configStr) return;
                 try {
-                    const config = JSON.parse(configString);
+                    const config = JSON.parse(configStr);
                     const app = fb.initializeApp(config);
                     const auth = fb.getAuth(app);
                     const store = fb.getFirestore(app);
                     setDb(store);
-
+                    
                     if (typeof __initial_auth_token !== 'undefined' && __initial_auth_token) {
                         await fb.signInWithCustomToken(auth, __initial_auth_token);
                     } else {
@@ -86,81 +84,61 @@
                     }
 
                     fb.onAuthStateChanged(auth, (u) => {
-                        if (u) {
-                            setUser(u);
-                            setIsBooting(false);
-                            setNeedsConfig(false);
-                        }
+                        if (u) { setUser(u); setCloudEnabled(true); }
                     });
-                } catch (e) {
-                    alert("憑證解析失敗，請確認 JSON 格式是否完整");
-                    console.error(e);
-                    setIsBooting(false);
-                }
+                } catch (e) { console.warn("Cloud config standby."); }
             };
 
             useEffect(() => {
-                if (typeof __firebase_config !== 'undefined') {
-                    initFirebase(__firebase_config);
-                } else {
-                    const savedConfig = localStorage.getItem('sv_fb_config');
-                    if (savedConfig) {
-                        initFirebase(savedConfig);
-                    } else {
-                        setNeedsConfig(true);
-                        setIsBooting(false);
-                    }
-                }
+                const configToUse = typeof __firebase_config !== 'undefined' ? __firebase_config : manualConfig;
+                initCloud(configToUse);
             }, []);
 
-            // --- 資料即時同步 ---
+            // --- 資料持久化與雲端同步 ---
+            useEffect(() => {
+                localStorage.setItem('sv_dates', JSON.stringify(availableDates));
+                localStorage.setItem('sv_bookings', JSON.stringify(bookings));
+                localStorage.setItem('sv_settings', JSON.stringify(settings));
+                localStorage.setItem('sv_fb_config', manualConfig);
+            }, [availableDates, bookings, settings, manualConfig]);
+
             useEffect(() => {
                 if (!user || !db) return;
-
-                const settingsRef = fb.doc(db, 'artifacts', appId, 'public', 'data', 'settings', 'global');
-                const unsubSettings = fb.onSnapshot(settingsRef, (d) => {
+                const unsubSettings = fb.onSnapshot(fb.doc(db, 'artifacts', appId, 'public', 'data', 'settings', 'global'), (d) => {
                     if (d.exists()) setSettings(d.data());
                 });
-
-                const dateCol = fb.collection(db, 'artifacts', appId, 'public', 'data', 'available_dates');
-                const unsubDates = fb.onSnapshot(dateCol, (snap) => {
+                const unsubDates = fb.onSnapshot(fb.collection(db, 'artifacts', appId, 'public', 'data', 'available_dates'), (snap) => {
                     setAvailableDates(snap.docs.map(d => ({id: d.id, ...d.data()})).sort((a,b) => (a.val||'').localeCompare(b.val||'')));
                 });
-
-                const bookCol = fb.collection(db, 'artifacts', appId, 'public', 'data', 'bookings');
-                const unsubBooks = fb.onSnapshot(bookCol, (snap) => {
+                const unsubBooks = fb.onSnapshot(fb.collection(db, 'artifacts', appId, 'public', 'data', 'bookings'), (snap) => {
                     setBookings(snap.docs.map(d => ({id: d.id, ...d.data()})));
                 });
-
                 return () => { unsubSettings(); unsubDates(); unsubBooks(); };
-            }, [user, db, appId]);
+            }, [user, db]);
 
-            // --- 操作方法 ---
-            const submitManualConfig = () => {
-                if(!manualConfig) return;
-                localStorage.setItem('sv_fb_config', manualConfig);
-                initFirebase(manualConfig);
-            };
-
-            const updateGlobalSettings = async (nextSet) => {
-                setSettings(nextSet);
-                if (db) await fb.setDoc(fb.doc(db, 'artifacts', appId, 'public', 'data', 'settings', 'global'), nextSet);
-            };
-
+            // --- 功能操作 ---
             const addDate = async () => {
-                if (!newDateInput || !db) return;
-                setIsSyncing(true);
-                await fb.addDoc(fb.collection(db, 'artifacts', appId, 'public', 'data', 'available_dates'), { val: newDateInput });
+                if (!newDateInput) return;
+                if (db) await fb.addDoc(fb.collection(db, 'artifacts', appId, 'public', 'data', 'available_dates'), { val: newDateInput });
+                else setAvailableDates([...availableDates, { id: Date.now(), val: newDateInput }].sort((a,b)=>a.val.localeCompare(b.val)));
                 setNewDateInput('');
-                setIsSyncing(false);
             };
 
             const removeDate = async (id) => {
-                if (confirm("確定移除？")) await fb.deleteDoc(fb.doc(db, 'artifacts', appId, 'public', 'data', 'available_dates', id));
+                if (!confirm("確定移除？")) return;
+                if (db) await fb.deleteDoc(fb.doc(db, 'artifacts', appId, 'public', 'data', 'available_dates', id));
+                else setAvailableDates(availableDates.filter(d => d.id !== id));
             };
 
             const deleteBooking = async (id) => {
-                if (confirm("確定刪除此預約紀錄？")) await fb.deleteDoc(fb.doc(db, 'artifacts', appId, 'public', 'data', 'bookings', id));
+                if (!confirm("確定刪除紀錄？")) return;
+                if (db) await fb.deleteDoc(fb.doc(db, 'artifacts', appId, 'public', 'data', 'bookings', id));
+                else setBookings(bookings.filter(b => b.id !== id));
+            };
+
+            const updateSettings = async (next) => {
+                setSettings(next);
+                if (db) await fb.setDoc(fb.doc(db, 'artifacts', appId, 'public', 'data', 'settings', 'global'), next);
             };
 
             const slots = useMemo(() => {
@@ -170,134 +148,97 @@
                 let current = sH * 60 + sM;
                 const endLimit = eH * 60 + eM;
                 while (current + 30 <= endLimit) {
-                    res.push({ 
-                        label: `${Math.floor(current/60).toString().padStart(2,'0')}:${(current%60).toString().padStart(2,'0')}`, 
-                        total: current 
-                    });
+                    res.push({ label: `${Math.floor(current/60).toString().padStart(2,'0')}:${(current%60).toString().padStart(2,'0')}`, total: current });
                     current += 30;
                 }
                 return res;
             }, [settings]);
 
-            const isOccupied = (date, start, duration) => {
-                return bookings.some(b => b.date === date && start < (b.startMin + b.duration) && (start + duration) > b.startMin);
-            };
-
-            const handleBookingSubmit = async () => {
-                if (!userName.trim() || !selectedSlot) return alert("請填寫姓名與時段");
+            const submitBooking = async () => {
+                if (!userName.trim() || !selectedSlot) return alert("請完整填寫");
                 setIsSyncing(true);
+                const data = { name: userName.trim(), date: selectedDate, time: selectedSlot.label, duration: selectedDuration, startMin: selectedSlot.total, createdAt: Date.now() };
                 try {
-                    await fb.addDoc(fb.collection(db, 'artifacts', appId, 'public', 'data', 'bookings'), {
-                        name: userName.trim(),
-                        date: selectedDate,
-                        time: selectedSlot.label,
-                        duration: selectedDuration,
-                        startMin: selectedSlot.total,
-                        createdAt: Date.now()
-                    });
+                    if (db) await fb.addDoc(fb.collection(db, 'artifacts', appId, 'public', 'data', 'bookings'), data);
+                    else setBookings([...bookings, { id: Date.now(), ...data }]);
                     setBookingConfirmed(true);
-                } catch(e) { alert("同步失敗，請確認網路連線"); }
-                setIsSyncing(false);
+                } finally { setIsSyncing(false); }
             };
-
-            // --- 視圖判斷邏輯 ---
-            if (isBooting) {
-                return (
-                    <div className="flex h-screen items-center justify-center bg-slate-900 text-white font-black italic animate-pulse tracking-widest uppercase">
-                        Establishing Secure Connection...
-                    </div>
-                );
-            }
-
-            // 修正：修正了當 showAdminLogin 為 true 時不應進入 Early Return 的問題
-            if (needsConfig && !isAdmin && !showAdminLogin) {
-                return (
-                    <div className="flex flex-col h-screen items-center justify-center bg-white p-10 text-center animate-up">
-                        <div className="w-24 h-24 bg-amber-50 text-amber-500 rounded-[32px] flex items-center justify-center mb-10 shadow-inner">
-                            <i className="fas fa-plug text-4xl"></i>
-                        </div>
-                        <h2 className="text-3xl font-black text-slate-900 tracking-tighter uppercase mb-6 leading-none">Cloud Config Needed</h2>
-                        <p className="text-sm text-slate-400 leading-relaxed mb-12 max-w-xs mx-auto">周董，此環境需手動配置 Firebase 憑證。請點擊下方按鈕進入管理員模式進行設定。</p>
-                        <button onClick={() => setShowAdminLogin(true)} className="w-full max-w-[280px] bg-slate-900 text-white py-5 rounded-3xl font-black text-[13px] uppercase tracking-widest shadow-2xl active:scale-95 transition-all">Go to Admin Portal</button>
-                    </div>
-                );
-            }
 
             return (
                 <div className="page-wrapper overflow-x-hidden">
-                    <div className="w-full max-w-[460px] bg-white rounded-[56px] custom-shadow overflow-hidden flex flex-col min-h-[850px] animate-up border border-slate-100">
-                        
+                    {/* 登入彈窗 */}
+                    {showAdminLogin && !isAdmin && (
+                        <div className="fixed inset-0 z-[200] flex items-center justify-center bg-slate-900/95 backdrop-blur-xl p-8">
+                            <div className="bg-white p-12 rounded-[56px] w-full max-w-sm shadow-2xl animate-up border border-slate-100">
+                                <h3 className="text-xl font-black mb-8 italic text-center uppercase tracking-widest text-slate-900 underline decoration-blue-500 decoration-4 underline-offset-8">Admin Access</h3>
+                                <input type="password" autoFocus placeholder="Passcode..." className="w-full border-b-4 border-slate-100 py-4 mb-10 outline-none font-black text-4xl text-center focus:border-blue-600 transition-all" onChange={e => setPwd(e.target.value)} onKeyDown={e => e.key === 'Enter' && (pwd === ADMIN_PASSWORD ? (setIsAdmin(true), setShowAdminLogin(false)) : alert('Error'))}/>
+                                <div className="flex gap-4">
+                                    <button onClick={() => setShowAdminLogin(false)} className="flex-1 py-5 text-slate-400 font-bold text-[12px] uppercase">Cancel</button>
+                                    <button onClick={() => pwd === ADMIN_PASSWORD ? (setIsAdmin(true), setShowAdminLogin(false)) : alert('Error')} className="flex-1 bg-slate-900 text-white rounded-[24px] py-5 font-black text-[12px] uppercase shadow-2xl active:scale-95 transition-all">Verify</button>
+                                </div>
+                            </div>
+                        </div>
+                    )}
+
+                    <div className="w-full max-w-[500px] bg-white rounded-[64px] custom-shadow overflow-hidden flex flex-col min-h-[850px] animate-up border border-slate-100/60">
                         {/* Header */}
-                        <div className="bg-slate-900 px-8 py-12 text-white shrink-0 relative overflow-hidden">
+                        <div className="bg-slate-900 px-10 py-14 text-white shrink-0 relative overflow-hidden">
                             <div className="absolute top-0 right-0 w-48 h-48 bg-blue-500/10 rounded-full -mr-24 -mt-24 blur-3xl"></div>
                             <div className="relative z-10 flex justify-between items-center px-2">
                                 <div>
                                     <h1 className="text-3xl font-black italic tracking-tighter leading-none mb-2">SKY VISION</h1>
                                     <div className="flex items-center gap-2">
-                                        <span className={`w-2.5 h-2.5 rounded-full ${user ? 'bg-green-400' : 'bg-red-400'} animate-pulse`}></span>
-                                        <p className="text-[10px] font-bold opacity-30 uppercase tracking-[0.4em]">Integrated Dispatcher v12.3</p>
+                                        <span className={`w-2.5 h-2.5 rounded-full ${cloudEnabled ? 'bg-green-400' : 'bg-amber-400'} animate-pulse`}></span>
+                                        <p className="text-[10px] font-bold opacity-30 uppercase tracking-[0.4em]">{cloudEnabled ? 'Global Sync Active' : 'Local Mode'}</p>
                                     </div>
                                 </div>
-                                <button onClick={() => setShowAdminLogin(true)} className="px-5 py-2.5 bg-blue-600 hover:bg-blue-500 rounded-full text-[11px] font-black uppercase tracking-widest transition-all shadow-xl active:scale-90 shadow-blue-900/20">Admin</button>
+                                <button onClick={() => setShowAdminLogin(true)} className="px-6 py-3 bg-blue-600 hover:bg-blue-500 rounded-full text-[11px] font-black uppercase tracking-widest transition-all shadow-xl active:scale-90 shadow-blue-900/20">Admin</button>
                             </div>
                         </div>
 
-                        {/* Admin Login Modal */}
-                        {showAdminLogin && !isAdmin && (
-                            <div className="fixed inset-0 z-[100] flex items-center justify-center bg-slate-900/95 backdrop-blur-md p-6">
-                                <div className="bg-white p-10 rounded-[48px] w-full max-w-sm shadow-2xl animate-up">
-                                    <h3 className="text-xl font-black mb-8 italic text-center uppercase tracking-widest text-slate-900 underline decoration-blue-500 decoration-4 underline-offset-8">Verify Access</h3>
-                                    <input type="password" autoFocus placeholder="Passcode..." className="w-full border-b-4 border-slate-100 py-4 mb-10 outline-none font-black text-4xl text-center focus:border-blue-600 transition-all" onChange={e => setPwd(e.target.value)} onKeyDown={e => e.key === 'Enter' && (pwd === ADMIN_PASSWORD ? (setIsAdmin(true), setShowAdminLogin(false)) : alert('Error'))}/>
-                                    <div className="flex gap-4">
-                                        <button onClick={() => setShowAdminLogin(false)} className="flex-1 py-5 text-slate-400 font-bold text-[11px] uppercase tracking-widest">Cancel</button>
-                                        <button onClick={() => pwd === ADMIN_PASSWORD ? (setIsAdmin(true), setShowAdminLogin(false)) : alert('Error')} className="flex-1 bg-slate-900 text-white rounded-3xl py-5 font-black text-[11px] uppercase shadow-xl active:scale-95 transition-all">Verify</button>
-                                    </div>
-                                </div>
-                            </div>
-                        )}
-
-                        <div className="flex-1 p-8 sm:p-10 overflow-y-auto scrollbar-hide">
+                        <div className="flex-1 p-8 sm:p-12 overflow-y-auto scrollbar-hide">
                             {isAdmin ? (
-                                <div className="space-y-12 animate-fade-in pb-10 px-1">
+                                <div className="space-y-12 animate-fade-in pb-10">
                                     <div className="flex justify-between items-center">
-                                        <h2 className="text-2xl font-black italic underline decoration-blue-600 decoration-4 underline-offset-8 uppercase tracking-tighter">Portal Admin</h2>
-                                        <button onClick={() => setIsAdmin(false)} className="text-[11px] font-bold text-slate-400 uppercase tracking-widest border-b-2 border-slate-200 pb-1">Exit</button>
+                                        <h2 className="text-2xl font-black italic underline decoration-blue-600 decoration-4 underline-offset-8 uppercase tracking-tighter">Control Hub</h2>
+                                        <button onClick={() => setIsAdmin(false)} className="text-[11px] font-bold text-slate-400 uppercase tracking-widest border-b-2 border-slate-200">Close</button>
                                     </div>
 
-                                    {/* 雲端配置 */}
-                                    {needsConfig && (
-                                        <div className="bg-amber-50 p-7 rounded-[36px] border border-amber-200">
-                                            <label className="text-[11px] font-black text-amber-600 mb-4 block tracking-[0.2em] uppercase italic border-l-4 border-amber-500 pl-4 leading-none">Step 01 / Cloud Credentials</label>
-                                            <textarea value={manualConfig} onChange={e => setManualConfig(e.target.value)} placeholder='Paste Firebase JSON here...' className="w-full h-32 bg-white border border-amber-200 rounded-3xl p-5 text-[10px] font-mono mb-4 focus:ring-4 focus:ring-amber-500/10 outline-none leading-relaxed" />
-                                            <button onClick={submitManualConfig} className="w-full bg-amber-600 text-white py-4 rounded-2xl font-black text-[11px] uppercase tracking-widest shadow-lg">Save Configuration</button>
+                                    {/* 雲端手動配置區 */}
+                                    {!cloudEnabled && (
+                                        <div className="bg-amber-50 p-8 rounded-[40px] border border-amber-200 shadow-inner">
+                                            <label className="text-[11px] font-black text-amber-600 mb-4 block tracking-[0.2em] uppercase italic border-l-4 border-amber-500 pl-4 leading-none text-left">Step 01 / 啟用全公司同步</label>
+                                            <textarea value={manualConfig} onChange={e => setManualConfig(e.target.value)} placeholder='在此貼入 Firebase JSON 憑證...' className="w-full h-32 bg-white border border-amber-200 rounded-[24px] p-6 text-[11px] font-mono mb-6 focus:ring-4 focus:ring-amber-500/10 outline-none leading-relaxed" />
+                                            <button onClick={() => initCloud(manualConfig)} className="w-full bg-amber-600 text-white py-5 rounded-[20px] font-black text-[11px] uppercase tracking-widest shadow-xl active:scale-95 transition-all">儲存並連接雲端</button>
                                         </div>
                                     )}
 
                                     {/* 服務時段設定 */}
-                                    <div className="bg-blue-50 p-8 rounded-[36px] border border-blue-100 shadow-inner">
-                                        <label className="text-[11px] font-black text-blue-400 mb-6 block tracking-[0.2em] uppercase italic border-l-4 border-blue-600 pl-4 leading-none">Service Hours Control</label>
-                                        <div className="grid grid-cols-2 gap-6">
+                                    <div className="bg-blue-50 p-8 rounded-[40px] border border-blue-100 shadow-inner">
+                                        <label className="text-[11px] font-black text-blue-400 mb-6 block tracking-[0.2em] uppercase italic border-l-4 border-blue-600 pl-4 leading-none text-left">開放時段管理</label>
+                                        <div className="grid grid-cols-2 gap-8">
                                             <div>
-                                                <p className="text-[10px] font-black text-blue-300 mb-2 uppercase">Session Start</p>
-                                                <input type="time" value={settings.startTime} onChange={e => updateGlobalSettings({...settings, startTime: e.target.value})} className="w-full bg-white border border-blue-100 rounded-2xl px-5 py-4 text-sm font-bold outline-none shadow-sm focus:ring-4 focus:ring-blue-500/10 transition-all" />
+                                                <p className="text-[10px] font-black text-blue-300 mb-2 uppercase">Start</p>
+                                                <input type="time" value={settings.startTime} onChange={e => updateSettings({...settings, startTime: e.target.value})} className="w-full bg-white border border-blue-100 rounded-[20px] px-5 py-4 text-sm font-bold outline-none shadow-sm focus:ring-4 focus:ring-blue-500/10" />
                                             </div>
                                             <div>
-                                                <p className="text-[10px] font-black text-blue-300 mb-2 uppercase">End Of Day</p>
-                                                <input type="time" value={settings.endTime} onChange={e => updateGlobalSettings({...settings, endTime: e.target.value})} className="w-full bg-white border border-blue-100 rounded-2xl px-5 py-4 text-sm font-bold outline-none shadow-sm focus:ring-4 focus:ring-blue-500/10 transition-all" />
+                                                <p className="text-[10px] font-black text-blue-300 mb-2 uppercase">End</p>
+                                                <input type="time" value={settings.endTime} onChange={e => updateSettings({...settings, endTime: e.target.value})} className="w-full bg-white border border-blue-100 rounded-[20px] px-5 py-4 text-sm font-bold outline-none shadow-sm focus:ring-4 focus:ring-blue-500/10" />
                                             </div>
                                         </div>
                                     </div>
 
                                     {/* 日期管理 */}
-                                    <div className="bg-slate-50 p-8 rounded-[36px] border border-slate-100 shadow-inner">
-                                        <label className="text-[11px] font-black text-slate-400 mb-6 block tracking-[0.2em] uppercase italic border-l-4 border-slate-900 pl-4 leading-none">Release Dates</label>
+                                    <div className="bg-slate-50 p-8 rounded-[40px] border border-slate-100 shadow-inner">
+                                        <label className="text-[11px] font-black text-slate-400 mb-6 block tracking-[0.2em] uppercase italic border-l-4 border-slate-900 pl-4 leading-none text-left">發布日期</label>
                                         <div className="flex gap-4">
-                                            <input type="date" value={newDateInput} onChange={e => setNewDateInput(e.target.value)} className="flex-1 bg-white border border-slate-100 rounded-2xl px-6 py-4 text-sm font-bold outline-none" />
-                                            <button onClick={addDate} className="bg-slate-900 text-white px-8 rounded-2xl font-black text-xs hover:bg-black transition-all shadow-xl active:scale-95 uppercase tracking-widest">Add</button>
+                                            <input type="date" value={newDateInput} onChange={e => setNewDateInput(e.target.value)} className="flex-1 bg-white border border-slate-100 rounded-[20px] px-6 py-4 text-sm font-bold outline-none" />
+                                            <button onClick={addDate} className="bg-slate-900 text-white px-8 rounded-[20px] font-black text-xs hover:bg-black transition-all shadow-xl uppercase">Add</button>
                                         </div>
                                         <div className="flex flex-wrap gap-2 mt-8">
                                             {availableDates.map(d => (
-                                                <div key={d.id} className="bg-white border border-slate-200 pl-5 pr-2 py-2 rounded-full text-[11px] font-black flex items-center gap-4 shadow-sm group">
+                                                <div key={d.id} className="bg-white border border-slate-200 pl-5 pr-2 py-2 rounded-full text-[11px] font-black flex items-center gap-4 shadow-sm">
                                                     {d.val}
                                                     <button onClick={() => removeDate(d.id)} className="w-7 h-7 flex items-center justify-center bg-red-50 text-red-500 rounded-full hover:bg-red-500 hover:text-white transition-all"><i className="fas fa-times scale-75"></i></button>
                                                 </div>
@@ -307,15 +248,13 @@
 
                                     {/* 監視預約 */}
                                     <div className="space-y-6">
-                                        <h3 className="text-[13px] font-black text-slate-400 uppercase tracking-[0.3em] px-1 border-l-[6px] border-slate-900 ml-1 pl-6 py-1">Enterprise Monitor</h3>
+                                        <h3 className="text-[13px] font-black text-slate-400 uppercase tracking-[0.3em] px-1 border-l-[6px] border-slate-900 ml-1 pl-6 py-1 text-left">Monitor</h3>
                                         <div className="space-y-5">
                                             {bookings.sort((a,b) => b.createdAt - a.createdAt).map(b => (
-                                                <div key={b.id} className="bg-white border border-slate-100 p-8 rounded-[40px] flex justify-between items-center shadow-sm border-l-[12px] border-l-slate-900 hover:border-blue-200 transition-all group">
-                                                    <div>
+                                                <div key={b.id} className="bg-white border border-slate-100 p-8 rounded-[40px] flex justify-between items-center shadow-sm border-l-[12px] border-l-slate-900 group">
+                                                    <div className="text-left">
                                                         <span className="font-black text-slate-800 text-2xl tracking-tighter leading-none block mb-3">{b.date} <span className="text-blue-600 ml-3">{b.time}</span></span>
-                                                        <p className="text-[12px] font-black text-slate-400 uppercase tracking-widest flex items-center gap-2">
-                                                            <i className="fas fa-id-card text-slate-200"></i> {b.name} <span className="opacity-20 mx-1">/</span> {b.duration} MIN
-                                                        </p>
+                                                        <p className="text-[12px] font-black text-slate-400 uppercase tracking-widest flex items-center gap-2"><i className="fas fa-id-card text-slate-200"></i> {b.name} <span className="opacity-20 mx-1">/</span> {b.duration} MIN</p>
                                                     </div>
                                                     <button onClick={() => deleteBooking(b.id)} className="w-14 h-14 flex items-center justify-center text-slate-200 hover:text-red-500 hover:bg-red-50 rounded-full transition-all active:scale-90"><i className="fas fa-trash-alt text-xl"></i></button>
                                                 </div>
@@ -324,32 +263,30 @@
                                     </div>
                                 </div>
                             ) : !bookingConfirmed ? (
-                                <div className="space-y-16 animate-fade-in pb-12 px-2 sm:px-4">
-                                    {/* Date Selection */}
-                                    <div>
+                                <div className="space-y-16 animate-fade-in pb-12">
+                                    <div className="text-left">
                                         <label className="text-[13px] font-black text-slate-400 mb-10 block tracking-[0.4em] uppercase italic border-l-[6px] border-blue-600 pl-6 leading-none py-1">01 / Choose Date</label>
                                         <div className="flex gap-5 overflow-x-auto pb-8 scrollbar-hide">
                                             {availableDates.map(d => (
-                                                <button key={d.id} onClick={() => {setSelectedDate(d.val); setSelectedSlot(null);}} className={`flex-shrink-0 px-9 py-8 rounded-[48px] border-2 transition-all flex flex-col items-center min-w-[150px] ${selectedDate === d.val ? 'border-blue-600 bg-blue-600 text-white shadow-2xl shadow-blue-600/40 scale-105 font-black' : 'border-slate-100 bg-white text-slate-400 hover:border-slate-300 hover:text-slate-600'}`}>
+                                                <button key={d.id} onClick={() => {setSelectedDate(d.val); setSelectedSlot(null);}} className={`flex-shrink-0 px-9 py-9 rounded-[48px] border-2 transition-all flex flex-col items-center min-w-[160px] ${selectedDate === d.val ? 'border-blue-600 bg-blue-600 text-white shadow-2xl shadow-blue-600/40 scale-105' : 'border-slate-100 bg-white text-slate-400 hover:border-slate-300'}`}>
                                                     <span className="text-[12px] font-black opacity-60 mb-3 italic tracking-[0.3em] uppercase">{d.val.split('-')[1]}/{d.val.split('-')[2]}</span>
                                                     <span className="text-2xl font-black uppercase tracking-tighter">{new Date(d.val).toLocaleDateString('zh-TW', {weekday: 'short'})}</span>
                                                 </button>
                                             ))}
-                                            {availableDates.length === 0 && <p className="w-full text-center text-slate-300 font-bold italic py-6 text-sm">NO SERVICE DATES RELEASED</p>}
+                                            {availableDates.length === 0 && <p className="w-full text-center text-slate-300 font-bold italic py-8 text-sm uppercase">暫無開放日期</p>}
                                         </div>
                                     </div>
 
-                                    {/* Duration & Identity */}
-                                    <div className="grid grid-cols-1 gap-16">
+                                    <div className="grid grid-cols-1 gap-16 text-left">
                                         <div className="space-y-10">
                                             <label className="text-[13px] font-black text-slate-400 block tracking-[0.4em] uppercase italic border-l-[6px] border-blue-600 pl-6 leading-none py-1">02 / Identity</label>
                                             <input type="text" value={userName} onChange={e => setUserName(e.target.value)} className="w-full bg-slate-50 border-0 border-b-[6px] border-slate-100 py-6 outline-none font-black text-5xl focus:border-blue-600 transition-all text-slate-900 placeholder:text-slate-100" placeholder="NAME..." />
                                         </div>
                                         <div className="space-y-10">
-                                            <label className="text-[13px] font-black text-slate-400 block tracking-[0.4em] uppercase italic border-l-[6px] border-blue-600 pl-6 leading-none py-1">03 / Service Duration</label>
+                                            <label className="text-[13px] font-black text-slate-400 block tracking-[0.4em] uppercase italic border-l-[6px] border-blue-600 pl-6 leading-none py-1">03 / Duration</label>
                                             <div className="grid grid-cols-2 gap-6">
                                                 {[30, 60].map(dur => (
-                                                    <button key={dur} onClick={() => {setSelectedDuration(dur); setSelectedSlot(null);}} className={`py-10 rounded-[40px] border-2 font-black transition-all flex flex-col items-center justify-center gap-3 ${selectedDuration === dur ? 'border-blue-600 bg-blue-50 text-blue-700 shadow-2xl' : 'border-slate-100 text-slate-400 bg-white hover:border-slate-300'}`}>
+                                                    <button key={dur} onClick={() => {setSelectedDuration(dur); setSelectedSlot(null);}} className={`py-12 rounded-[40px] border-2 font-black transition-all flex flex-col items-center justify-center gap-3 ${selectedDuration === dur ? 'border-blue-600 bg-blue-50 text-blue-700 shadow-2xl' : 'border-slate-100 text-slate-400 bg-white hover:border-slate-300'}`}>
                                                         <span className="text-5xl leading-none tracking-tighter">{dur}</span>
                                                         <span className="text-[12px] uppercase tracking-[0.3em] opacity-60 font-black">MINUTES</span>
                                                     </button>
@@ -358,17 +295,16 @@
                                         </div>
                                     </div>
 
-                                    {/* Time Slot Picker */}
-                                    <div>
-                                        <label className="text-[13px] font-black text-slate-400 mb-12 block tracking-[0.4em] uppercase italic border-l-[6px] border-blue-600 pl-6 leading-none py-1">04 / Start Time <span className="text-[10px] opacity-40 ml-2 uppercase tracking-widest font-black">({settings.startTime} - {settings.endTime})</span></label>
+                                    <div className="text-left">
+                                        <label className="text-[13px] font-black text-slate-400 mb-12 block tracking-[0.4em] uppercase italic border-l-[6px] border-blue-600 pl-6 leading-none py-1">04 / Start Time <span className="text-[11px] opacity-40 ml-2 uppercase font-black tracking-widest">({settings.startTime} - {settings.endTime})</span></label>
                                         <div className="grid grid-cols-4 gap-4">
                                             {slots.map(s => {
-                                                const occ = isOccupied(selectedDate, s.total, selectedDuration);
+                                                const occ = bookings.some(b => b.date === selectedDate && s.total < (b.startMin + b.duration) && (s.total + selectedDuration) > b.startMin);
                                                 const occupant = bookings.find(b => b.date === selectedDate && s.total >= b.startMin && s.total < (b.startMin + b.duration));
                                                 return (
-                                                    <button key={s.label} disabled={occ || !selectedDate} onClick={() => setSelectedSlot(s)} className={`py-6 rounded-3xl text-[14px] font-black transition-all relative ${occ ? 'bg-slate-100 text-slate-300 border-0 opacity-40 cursor-not-allowed border-dashed border border-slate-200' : selectedSlot?.label === s.label ? 'bg-slate-900 text-white shadow-2xl scale-110 ring-8 ring-slate-100 z-10' : 'bg-white border-2 border-slate-100 text-slate-600 hover:border-blue-500 hover:text-blue-600 hover:shadow-xl'}`}>
+                                                    <button key={s.label} disabled={occ || !selectedDate} onClick={() => setSelectedSlot(s)} className={`py-7 rounded-[28px] text-[15px] font-black transition-all relative ${occ ? 'bg-slate-100 text-slate-300 border-0 opacity-40 cursor-not-allowed border-dashed border border-slate-200' : selectedSlot?.label === s.label ? 'bg-slate-900 text-white shadow-2xl scale-110 ring-[10px] ring-slate-100 z-10' : 'bg-white border-2 border-slate-100 text-slate-600 hover:border-blue-500 hover:text-blue-600 hover:shadow-xl'}`}>
                                                         {s.label}
-                                                        {occupant ? <span className="absolute -bottom-3 left-0 w-full text-[8px] text-slate-400 font-bold truncate px-2 text-center uppercase tracking-tight">{occupant.name}</span> : null}
+                                                        {occupant && <span className="absolute -bottom-3 left-0 w-full text-[8px] text-slate-400 font-bold truncate px-2 text-center uppercase tracking-tighter">{occupant.name}</span>}
                                                     </button>
                                                 );
                                             })}
@@ -376,49 +312,47 @@
                                     </div>
 
                                     <div className="pt-10">
-                                        <button disabled={!selectedSlot || !userName || isSyncing} onClick={handleBookingSubmit} className={`booking-btn w-full py-10 rounded-[48px] font-black text-2xl shadow-2xl transition-all flex items-center justify-center gap-6 ${!selectedSlot || !userName || isSyncing ? 'bg-slate-100 text-slate-300 shadow-none' : 'bg-gradient-to-br from-blue-600 to-blue-800 text-white hover:brightness-110 shadow-blue-600/40 active:scale-95'}`}>
+                                        <button disabled={!selectedSlot || !userName || isSyncing} onClick={submitBooking} className={`booking-btn w-full py-10 rounded-[48px] font-black text-2xl shadow-2xl transition-all flex items-center justify-center gap-6 ${!selectedSlot || !userName || isSyncing ? 'bg-slate-100 text-slate-300 shadow-none' : 'bg-gradient-to-br from-blue-600 to-blue-800 text-white hover:brightness-110 shadow-blue-600/40 active:scale-95'}`}>
                                             {isSyncing ? <i className="fas fa-circle-notch animate-spin text-3xl"></i> : 'SECURE APPOINTMENT'}
                                         </button>
                                     </div>
 
-                                    {/* 透明公示清單 */}
-                                    <div className="mt-20 pt-20 border-t-2 border-slate-100">
-                                        <h3 className="text-[12px] font-black text-slate-400 uppercase tracking-[0.7em] mb-12 text-center">Dispatcher Log</h3>
+                                    {/* 公示欄 */}
+                                    <div className="mt-24 pt-24 border-t-2 border-slate-100">
+                                        <h3 className="text-[13px] font-black text-slate-400 uppercase tracking-[0.7em] mb-12 text-center italic">Today's Schedule</h3>
                                         <div className="space-y-4">
                                             {bookings.filter(b => b.date === selectedDate).sort((a,b) => a.startMin - b.startMin).map(b => (
-                                                <div key={b.id} className="flex justify-between items-center px-10 py-7 bg-slate-50 rounded-[40px] border border-slate-100 shadow-inner">
-                                                    <span className="font-black text-slate-800 text-xl tracking-tighter uppercase">{b.time}</span>
-                                                    <span className="font-black text-blue-600 text-xl italic tracking-tight uppercase underline decoration-4 underline-offset-8 decoration-blue-100">{b.name}</span>
+                                                <div key={b.id} className="flex justify-between items-center px-10 py-8 bg-slate-50 rounded-[40px] border border-slate-100 shadow-inner">
+                                                    <span className="font-black text-slate-800 text-2xl tracking-tighter uppercase">{b.time}</span>
+                                                    <span className="font-black text-blue-600 text-2xl italic tracking-tight uppercase underline decoration-4 underline-offset-8 decoration-blue-100">{b.name}</span>
                                                 </div>
                                             ))}
-                                            {bookings.filter(b => b.date === selectedDate).length === 0 && <p className="text-center text-slate-300 font-bold py-10 text-sm italic uppercase tracking-widest">No entries for this date</p>}
+                                            {bookings.filter(b => b.date === selectedDate).length === 0 && <p className="text-center text-slate-300 font-bold py-10 text-sm italic uppercase tracking-widest uppercase">No Reservations</p>}
                                         </div>
                                     </div>
                                 </div>
                             ) : (
                                 <div className="p-20 text-center space-y-20 animate-fade-in">
                                     <div className="relative inline-block scale-150">
-                                        <div className="w-32 h-32 bg-green-500 text-white rounded-[44px] flex items-center justify-center mx-auto shadow-2xl relative z-10 animate-bounce">
+                                        <div className="w-36 h-36 bg-green-500 text-white rounded-[48px] flex items-center justify-center mx-auto shadow-2xl relative z-10 animate-bounce">
                                             <i className="fas fa-check text-5xl"></i>
                                         </div>
-                                        <div className="absolute inset-0 bg-green-500 rounded-[44px] animate-ping opacity-20"></div>
+                                        <div className="absolute inset-0 bg-green-500 rounded-[48px] animate-ping opacity-20"></div>
                                     </div>
-                                    <div>
-                                        <h2 className="text-6xl font-black italic tracking-tighter uppercase text-slate-900 leading-none mb-8">SYNCED</h2>
-                                        <p className="text-slate-400 font-bold uppercase tracking-[0.6em] text-[13px] leading-relaxed px-10">Your reservation has been<br/>dispatched to Sky Vision Hub</p>
-                                    </div>
-                                    <button onClick={() => {setBookingConfirmed(false); setUserName(''); setSelectedSlot(null);}} className="text-slate-400 hover:text-blue-600 font-black text-[16px] tracking-[0.5em] uppercase transition-all flex items-center justify-center gap-6 mx-auto py-12 group">
-                                        <i className="fas fa-arrow-left group-hover:-translate-x-4 transition-transform"></i> Return Portal
+                                    <h2 className="text-7xl font-black italic tracking-tighter uppercase text-slate-900 leading-none mb-8">SYNCED</h2>
+                                    <p className="text-slate-400 font-bold uppercase tracking-[0.6em] text-[14px] leading-relaxed px-10">預約資料已成功同步</p>
+                                    <button onClick={() => {setBookingConfirmed(false); setUserName(''); setSelectedSlot(null);}} className="text-slate-400 hover:text-blue-600 font-black text-[18px] tracking-[0.5em] uppercase transition-all flex items-center justify-center gap-6 mx-auto py-12 group">
+                                        <i className="fas fa-arrow-left group-hover:-translate-x-4 transition-transform"></i> BACK TO HOME
                                     </button>
                                 </div>
                             )}
                         </div>
 
                         {/* Footer */}
-                        <div className="bg-white px-10 py-12 border-t border-slate-100 text-center shrink-0">
-                            <p className="text-[11px] text-slate-400 font-black tracking-[0.8em] uppercase leading-relaxed italic opacity-50">
+                        <div className="bg-white px-10 py-14 border-t border-slate-100 text-center shrink-0">
+                            <p className="text-[11px] text-slate-400 font-black tracking-[0.9em] uppercase leading-relaxed italic opacity-50">
                                 SKY VISION LEAGUE - DIGITAL INFRASTRUCTURE<br/>
-                                <span className="text-blue-500/50">NODE: {appId}</span> | Enterprise Cloud v12.3
+                                <span className="text-blue-500/50 uppercase">Integrated Node</span> | Enterprise v12.5
                             </p>
                         </div>
                     </div>
