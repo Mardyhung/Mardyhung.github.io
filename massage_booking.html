@@ -19,31 +19,24 @@
         @keyframes fadeIn { from { opacity: 0; transform: translateY(10px); } to { opacity: 1; transform: translateY(0); } }
     </style>
 </head>
-<body class="bg-slate-50">
+<body class="bg-slate-50 text-slate-900">
     <div id="root"></div>
 
     <script type="text/babel">
         const { useState, useEffect, useMemo } = React;
 
         const App = () => {
-            // 營業時間設定
-            const START_HOUR = 18; 
-            const START_MIN = 30; 
-            const END_HOUR = 23; 
-            const SLOT_INTERVAL = 30;
+            const START_HOUR = 18; const START_MIN = 30; const END_HOUR = 23; const SLOT_INTERVAL = 30;
             const ADMIN_PASSWORD = "23128951";
 
-            // Lark 串接配置（已填入周董提供之憑證）
-            const [larkConfig, setLarkConfig] = useState({ 
+            const [larkConfig] = useState({ 
                 appId: 'cli_a936584430b8ded2', 
                 appSecret: 'CYSTv1bNrXph5p79YzHKKcWEyb2OAPiD', 
                 appToken: 'XqCWbEx4ZamziBsuKhClW3YPgxf', 
                 tableId: 'tblw0ocVXfvrXyOX' 
             });
 
-            // 狀態管理
             const [isAdmin, setIsAdmin] = useState(false);
-            const [showPasswordModal, setShowPasswordModal] = useState(false);
             const [availableDates, setAvailableDates] = useState(['2025-05-20', '2025-05-22', '2025-05-23', '2025-05-24', '2025-05-25']);
             const [selectedDate, setSelectedDate] = useState('');
             const [selectedDuration, setSelectedDuration] = useState(30);
@@ -51,48 +44,38 @@
             const [bookedSlots, setBookedSlots] = useState([]); 
             const [selectedSlot, setSelectedSlot] = useState(null);
             const [bookingConfirmed, setBookingConfirmed] = useState(false);
-            const [editingRecordId, setEditingRecordId] = useState(null); 
             const [isSyncing, setIsSyncing] = useState(false);
-            const [errorType, setErrorType] = useState(null); // 'CORS' | 'API' | null
             const [errorMsg, setErrorMsg] = useState('');
 
-            // 獲取當前網域用於 CORS 白名單設定
-            const currentOrigin = window.location.origin === 'null' ? '本地檔案 (File Protocol)' : window.location.origin;
-
-            const fetchWithRetry = async (url, options, retries = 3, backoff = 1000) => {
+            const fetchWithRetry = async (url, options, retries = 3) => {
                 try {
                     const response = await fetch(url, options);
                     if (!response.ok) {
                         const errorData = await response.json().catch(() => ({}));
-                        throw new Error(errorData.msg || `HTTP 錯誤碼: ${response.status}`);
+                        throw new Error(errorData.msg || `Lark 回傳錯誤 ${response.status}`);
                     }
                     return await response.json();
                 } catch (err) {
-                    if (err.name === 'TypeError' || err.message.includes('Failed to fetch')) {
-                        setErrorType('CORS');
-                        throw new Error("Lark API 拒絕了此網域的連線要求 (CORS 限制)。");
-                    }
-                    if (retries > 0) {
-                        await new Promise(r => setTimeout(r, backoff));
-                        return fetchWithRetry(url, options, retries - 1, backoff * 2);
+                    if (err.name === 'TypeError') {
+                        throw new Error("連線被拒絕。請確認：\n1. 已在後台「H5 信任域名」加入 mardyhung.github.io\n2. 應用已發布最新版本\n3. 網址開頭是 https。");
                     }
                     throw err;
                 }
             };
 
             const getLarkToken = async () => {
-                return await fetchWithRetry("https://open.larksuite.com/open-apis/auth/v3/tenant_access_token/internal", {
+                const res = await fetchWithRetry("https://open.larksuite.com/open-apis/auth/v3/tenant_access_token/internal", {
                     method: 'POST',
                     headers: { 'Content-Type': 'application/json' },
                     body: JSON.stringify({ app_id: larkConfig.appId, app_secret: larkConfig.appSecret })
-                }).then(res => res.tenant_access_token);
+                });
+                return res.tenant_access_token;
             };
 
             const fetchBookings = async () => {
-                if (!larkConfig.tableId || !larkConfig.appId) return;
+                if (!larkConfig.tableId) return;
                 setIsSyncing(true);
                 setErrorMsg('');
-                setErrorType(null);
                 try {
                     const token = await getLarkToken();
                     const res = await fetchWithRetry(`https://open.larksuite.com/open-apis/bitable/v1/apps/${larkConfig.appToken}/tables/${larkConfig.tableId}/records?page_size=100`, {
@@ -114,27 +97,7 @@
                 } finally { setIsSyncing(false); }
             };
 
-            const handleBooking = async () => {
-                if (!userName.trim()) return alert("請填寫姓名");
-                setIsSyncing(true);
-                try {
-                    const token = await getLarkToken();
-                    const isEdit = !!editingRecordId;
-                    const url = isEdit 
-                        ? `https://open.larksuite.com/open-apis/bitable/v1/apps/${larkConfig.appToken}/tables/${larkConfig.tableId}/records/${editingRecordId}`
-                        : `https://open.larksuite.com/open-apis/bitable/v1/apps/${larkConfig.appToken}/tables/${larkConfig.tableId}/records`;
-                    
-                    await fetchWithRetry(url, {
-                        method: isEdit ? 'PUT' : 'POST',
-                        headers: { 'Authorization': `Bearer ${token}`, 'Content-Type': 'application/json' },
-                        body: JSON.stringify({ fields: { "Name": userName, "Date": selectedDate, "Time": selectedSlot.time, "Duration": selectedDuration } })
-                    });
-                    setBookingConfirmed(true);
-                    fetchBookings();
-                } catch (e) { alert("操作失敗: " + e.message); } finally { setIsSyncing(false); }
-            };
-
-            useEffect(() => { fetchBookings(); }, [larkConfig.appId, larkConfig.appSecret]);
+            useEffect(() => { fetchBookings(); }, []);
 
             const slots = useMemo(() => {
                 const s = [];
@@ -146,117 +109,99 @@
                 return s;
             }, [selectedDuration]);
 
-            const isSlotOccupied = (date, start, duration) => {
-                return bookedSlots.some(b => b.id !== editingRecordId && b.date === date && start < (b.start + b.duration) && b.start < (start + duration));
+            const handleBooking = async () => {
+                if (!userName.trim()) return alert("請填寫姓名");
+                setIsSyncing(true);
+                try {
+                    const token = await getLarkToken();
+                    const url = `https://open.larksuite.com/open-apis/bitable/v1/apps/${larkConfig.appToken}/tables/${larkConfig.tableId}/records`;
+                    
+                    await fetchWithRetry(url, {
+                        method: 'POST',
+                        headers: { 'Authorization': `Bearer ${token}`, 'Content-Type': 'application/json' },
+                        body: JSON.stringify({ fields: { "Name": userName, "Date": selectedDate, "Time": selectedSlot.time, "Duration": selectedDuration } })
+                    });
+                    setBookingConfirmed(true);
+                    fetchBookings();
+                } catch (e) { alert("操作失敗: " + e.message); } finally { setIsSyncing(false); }
             };
 
             return (
-                <div className="max-w-xl mx-auto my-10 bg-white rounded-[40px] shadow-2xl overflow-hidden border border-slate-100 min-h-[600px] flex flex-col">
+                <div className="max-w-xl mx-auto my-10 bg-white rounded-[40px] shadow-2xl overflow-hidden border border-slate-100 min-h-[600px] flex flex-col animate-fade-in">
                     <div className="bg-slate-900 p-8 text-white flex justify-between items-center shrink-0">
                         <div>
-                            <h1 className="text-2xl font-black tracking-tighter italic">SKY VISION</h1>
-                            <p className="text-[9px] font-bold opacity-40 tracking-[0.4em] uppercase">智能預約系統</p>
+                            <h1 className="text-2xl font-black italic tracking-tighter">SKY VISION</h1>
+                            <p className="text-[9px] font-bold opacity-40 uppercase tracking-widest italic">Smart Dispatcher</p>
                         </div>
                         <div className="flex gap-2">
-                            <button onClick={fetchBookings} className={`p-2 bg-slate-800 rounded-full hover:bg-slate-700 transition-all ${isSyncing ? 'animate-spin' : ''}`}>
+                            <button onClick={fetchBookings} className={`p-2 bg-slate-800 rounded-full ${isSyncing ? 'animate-spin' : ''}`}>
                                 <i className="fas fa-sync-alt text-xs"></i>
                             </button>
-                            <button onClick={() => setIsAdmin(!isAdmin)} className="text-[10px] bg-slate-800 px-4 py-2 rounded-full font-bold uppercase tracking-widest border border-slate-700">管理員</button>
+                            <button onClick={() => setIsAdmin(!isAdmin)} className="text-[10px] bg-slate-800 px-4 py-2 rounded-full font-bold uppercase tracking-widest border border-slate-700">管理端</button>
                         </div>
                     </div>
 
                     <div className="flex-1 overflow-y-auto scrollbar-hide">
-                        {errorType === 'CORS' && (
-                            <div className="m-6 p-6 bg-amber-50 border border-amber-200 rounded-3xl animate-fade-in">
+                        {errorMsg && (
+                            <div className="m-6 p-6 bg-amber-50 border border-amber-200 rounded-3xl">
                                 <h4 className="text-amber-800 font-black text-sm mb-2 flex items-center gap-2">
-                                    <i className="fas fa-shield-alt"></i> 安全連線提示 (CORS 阻擋)
+                                    <i className="fas fa-shield-alt"></i> 安全連線配置提醒
                                 </h4>
-                                <p className="text-[11px] text-amber-700 leading-relaxed mb-4 font-medium">
-                                    由於 Lark 的安全機制，請務必按照以下步驟解決連線問題：
+                                <p className="text-[11px] text-amber-700 leading-relaxed mb-4">
+                                    {errorMsg}
                                 </p>
-                                <div className="bg-white p-3 rounded-xl mb-4 border border-amber-100 space-y-2">
-                                    <p className="text-[10px] font-bold text-slate-400 uppercase">1. 複製您的目前網域</p>
-                                    <code className="block bg-slate-100 p-2 rounded text-[10px] font-mono break-all text-blue-600 font-bold">{currentOrigin}</code>
-                                    <p className="text-[10px] font-bold text-slate-400 uppercase mt-2">2. 前往 Lark 開發者後台</p>
-                                    <p className="text-[10px] text-slate-500 font-medium">在「安全設置」>「H5 信任域名」中，將上方網域加入白名單並「發布應用」。</p>
+                                <div className="bg-white p-4 rounded-2xl border border-amber-100">
+                                    <p className="text-[10px] font-bold text-slate-400 uppercase mb-2">解決方案步驟：</p>
+                                    <ol className="text-[10px] text-slate-600 space-y-1 list-decimal ml-4">
+                                        <li>在 Lark 應用後台進入<strong>「安全設置」</strong>。</li>
+                                        <li>不要點「IP 白名單」，請找<strong>「H5 信任域名」</strong>分頁。</li>
+                                        <li>填入 <code className="bg-slate-100 px-1 font-bold">https://mardyhung.github.io</code></li>
+                                        <li>前往<strong>「版本管理與發佈」</strong>點擊<strong>「申請發佈」</strong>。</li>
+                                    </ol>
                                 </div>
-                                <button onClick={fetchBookings} className="w-full py-2 bg-amber-600 text-white rounded-xl text-[10px] font-black uppercase tracking-widest">嘗試重新讀取</button>
                             </div>
                         )}
 
-                        {isAdmin ? (
-                            <div className="p-8 space-y-6 animate-fade-in">
-                                <div className="bg-slate-50 p-6 rounded-3xl border border-slate-100 flex items-center justify-between">
-                                    <span className="text-xs font-black text-slate-400 uppercase">資料庫狀態</span>
-                                    <span className={`px-3 py-1 rounded-full text-[9px] font-black uppercase ${bookedSlots.length > 0 ? 'bg-green-100 text-green-600' : 'bg-slate-200 text-slate-400'}`}>
-                                        {bookedSlots.length > 0 ? '已連線' : '未同步'}
-                                    </span>
-                                </div>
-                                <div className="space-y-3">
-                                    {bookedSlots.map(b => (
-                                        <div key={b.id} className="p-4 bg-white border border-slate-100 rounded-2xl flex justify-between items-center shadow-sm">
-                                            <div className="flex flex-col">
-                                                <span className="text-xs font-black">{b.date} {b.timeString}</span>
-                                                <span className="text-[10px] text-slate-400 font-bold uppercase">{b.userName} / {b.duration}m</span>
-                                            </div>
-                                            <div className="flex gap-2">
-                                                <button onClick={() => {
-                                                    setEditingRecordId(b.id); setSelectedDate(b.date); setUserName(b.userName);
-                                                    setSelectedDuration(b.duration); setSelectedSlot({time: b.timeString, totalMinutes: b.start});
-                                                    setIsAdmin(false); setBookingConfirmed(false);
-                                                }} className="text-slate-300 hover:text-blue-500 transition-all"><i className="fas fa-edit text-xs"></i></button>
-                                            </div>
-                                        </div>
-                                    ))}
-                                </div>
-                            </div>
-                        ) : !bookingConfirmed ? (
+                        {!bookingConfirmed ? (
                             <div className="p-8 space-y-8 animate-fade-in">
                                 <div>
-                                    <label className="text-[10px] font-black text-slate-400 mb-4 block tracking-widest uppercase">01 / 日期</label>
+                                    <label className="text-[10px] font-black text-slate-400 mb-4 block tracking-widest uppercase italic underline decoration-blue-500 underline-offset-8">01 / 日期選擇</label>
                                     <div className="flex gap-2 overflow-x-auto pb-2 scrollbar-hide">
                                         {availableDates.map(d => (
-                                            <button key={d} onClick={() => {setSelectedDate(d); setSelectedSlot(null);}} className={`px-6 py-4 rounded-2xl border-2 transition-all flex-shrink-0 flex flex-col items-center min-w-[100px] ${selectedDate === d ? 'border-blue-600 bg-blue-50 text-blue-700 shadow-xl scale-105' : 'border-slate-100 text-slate-300 hover:border-slate-200'}`}>
+                                            <button key={d} onClick={() => {setSelectedDate(d); setSelectedSlot(null);}} className={`flex-shrink-0 px-6 py-4 rounded-2xl border-2 transition-all flex flex-col items-center min-w-[100px] ${selectedDate === d ? 'border-blue-600 bg-blue-50 text-blue-700 shadow-xl scale-105 font-black' : 'border-slate-100 text-slate-300'}`}>
                                                 <span className="text-[10px] font-bold opacity-60 mb-1">{d.slice(5)}</span>
-                                                <span className="text-sm font-black uppercase tracking-tighter">{new Date(d).toLocaleDateString('zh-TW', {weekday: 'short'})}</span>
+                                                <span className="text-sm uppercase tracking-tighter">{new Date(d).toLocaleDateString('zh-TW', {weekday: 'short'})}</span>
                                             </button>
                                         ))}
                                     </div>
                                 </div>
                                 <div>
-                                    <label className="text-[10px] font-black text-slate-400 mb-4 block tracking-widest uppercase">02 / 姓名</label>
-                                    <input type="text" value={userName} onChange={e => setUserName(e.target.value)} className="w-full border-b-2 border-slate-100 py-3 outline-none font-black text-2xl focus:border-blue-600 transition-all text-slate-800 placeholder:text-slate-100" placeholder="填寫姓名..." />
+                                    <label className="text-[10px] font-black text-slate-400 mb-4 block tracking-widest uppercase italic underline decoration-blue-500 underline-offset-8">02 / 預約姓名</label>
+                                    <input type="text" value={userName} onChange={e => setUserName(e.target.value)} className="w-full border-b-2 border-slate-100 py-3 outline-none font-black text-2xl focus:border-blue-600 transition-all text-slate-800" placeholder="NAME..." />
                                 </div>
                                 <div>
-                                    <label className="text-[10px] font-black text-slate-400 mb-4 block tracking-widest uppercase">03 / 時段</label>
+                                    <label className="text-[10px] font-black text-slate-400 mb-4 block tracking-widest uppercase italic underline decoration-blue-500 underline-offset-8">03 / 時段 (18:30 起)</label>
                                     <div className="grid grid-cols-4 gap-2">
                                         {slots.map(s => {
-                                            const occ = bookedSlots.some(b => b.id !== editingRecordId && b.date === selectedDate && b.start < (s.totalMinutes + selectedDuration) && s.totalMinutes < (b.start + b.duration));
+                                            const occ = bookedSlots.some(b => b.date === selectedDate && b.start < (s.totalMinutes + selectedDuration) && s.totalMinutes < (b.start + b.duration));
                                             return (
-                                                <button key={s.time} disabled={occ || !selectedDate} onClick={() => setSelectedSlot(s)} className={`py-4 rounded-xl text-xs font-black transition-all ${occ ? 'bg-slate-50 text-slate-200 border-dashed border-slate-100 border cursor-not-allowed' : selectedSlot?.time === s.time ? 'bg-blue-600 text-white shadow-xl scale-105 ring-4 ring-blue-50' : 'bg-white border border-slate-200 hover:border-blue-400'}`}>
+                                                <button key={s.time} disabled={occ || !selectedDate} onClick={() => setSelectedSlot(s)} className={`py-4 rounded-xl text-xs font-black transition-all ${occ ? 'bg-slate-50 text-slate-200 border-dashed border-slate-100 border cursor-not-allowed' : selectedSlot?.time === s.time ? 'bg-blue-600 text-white shadow-xl scale-105 ring-4 ring-blue-50' : 'bg-white border border-slate-200 text-slate-600 hover:border-blue-400'}`}>
                                                     {s.time}
                                                 </button>
                                             );
                                         })}
                                     </div>
                                 </div>
-                                <button disabled={!selectedSlot || !userName || isSyncing} onClick={handleBooking} className={`w-full py-6 rounded-3xl font-black text-xl shadow-2xl transition-all flex items-center justify-center gap-3 ${!selectedSlot || !userName || isSyncing ? 'bg-slate-100 text-slate-300' : 'bg-blue-600 text-white hover:bg-blue-700'}`}>
-                                    {isSyncing ? <i className="fas fa-spinner animate-spin"></i> : null}
-                                    {isSyncing ? '處理中...' : editingRecordId ? '更新預約' : '立即確認預約'}
+                                <button disabled={!selectedSlot || !userName || isSyncing} onClick={handleBooking} className={`w-full py-6 rounded-[2.5rem] font-black text-xl shadow-2xl transition-all flex items-center justify-center gap-3 ${!selectedSlot || !userName || isSyncing ? 'bg-slate-100 text-slate-300' : 'bg-blue-600 text-white hover:bg-blue-700'}`}>
+                                    {isSyncing ? <i className="fas fa-spinner animate-spin"></i> : '立即確認預約'}
                                 </button>
                             </div>
                         ) : (
                             <div className="p-16 text-center space-y-8 animate-fade-in">
                                 <div className="w-24 h-24 bg-green-50 text-green-500 rounded-full flex items-center justify-center mx-auto shadow-inner"><i className="fas fa-check text-4xl"></i></div>
-                                <div>
-                                    <h2 className="text-4xl font-black italic tracking-tighter uppercase">Success!</h2>
-                                    <p className="text-slate-400 font-bold uppercase tracking-[0.3em] text-[10px] mt-2">資料已同步至 Lark</p>
-                                </div>
-                                <div className="bg-slate-50 p-6 rounded-3xl border border-slate-100 text-left space-y-3">
-                                    <div className="flex justify-between border-b border-slate-200 pb-3"><span className="text-[10px] font-bold text-slate-400 uppercase tracking-widest">客戶姓名</span><span className="font-black">{userName}</span></div>
-                                    <div className="flex justify-between border-b border-slate-200 pb-3"><span className="text-[10px] font-bold text-slate-400 uppercase tracking-widest">日期時間</span><span className="font-black">{selectedDate} / {selectedSlot?.time}</span></div>
-                                </div>
-                                <button onClick={() => {setBookingConfirmed(false); setUserName(''); setSelectedSlot(null); setEditingRecordId(null);}} className="text-slate-300 hover:text-slate-800 font-black text-[10px] tracking-widest uppercase transition-all">返回主頁</button>
+                                <h2 className="text-4xl font-black italic tracking-tighter uppercase text-slate-900">Success!</h2>
+                                <p className="text-slate-400 font-bold uppercase tracking-[0.3em] text-[10px]">資料已即時寫入多維表格</p>
+                                <button onClick={() => {setBookingConfirmed(false); setUserName(''); setSelectedSlot(null);}} className="text-slate-300 hover:text-slate-800 font-black text-[10px] tracking-widest uppercase py-4 transition-all">返回首頁</button>
                             </div>
                         )}
                     </div>
