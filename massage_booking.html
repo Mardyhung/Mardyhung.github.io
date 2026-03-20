@@ -2,8 +2,8 @@
 <html lang="zh-TW">
 <head>
     <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Sky Vision 按摩預約系統 v9.2</title>
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+    <title>Sky Vision 按摩預約系統 v9.3</title>
     <!-- 核心框架 -->
     <script src="https://unpkg.com/react@18/umd/react.production.min.js"></script>
     <script src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js"></script>
@@ -20,10 +20,18 @@
     <link href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.0.0/css/all.min.css" rel="stylesheet">
     <style>
         @import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;700;900&display=swap');
-        body { font-family: 'Inter', sans-serif; background-color: #f8fafc; }
+        body { 
+            font-family: 'Inter', 'Noto Sans TC', sans-serif; 
+            background-color: #f1f5f9; 
+            margin: 0;
+            padding: 0;
+            -webkit-tap-highlight-color: transparent;
+        }
         .scrollbar-hide::-webkit-scrollbar { display: none; }
-        .animate-up { animation: fadeInUp 0.4s ease-out; }
-        @keyframes fadeInUp { from { opacity: 0; transform: translateY(15px); } to { opacity: 1; transform: translateY(0); } }
+        .animate-up { animation: fadeInUp 0.5s cubic-bezier(0.16, 1, 0.3, 1); }
+        @keyframes fadeInUp { from { opacity: 0; transform: translateY(20px); } to { opacity: 1; transform: translateY(0); } }
+        .booking-btn:active { transform: scale(0.96); }
+        .custom-shadow { box-shadow: 0 20px 25px -5px rgba(0, 0, 0, 0.1), 0 10px 10px -5px rgba(0, 0, 0, 0.04); }
     </style>
 </head>
 <body>
@@ -36,10 +44,8 @@
             const START_HOUR = 18; const START_MIN = 30; const END_HOUR = 23;
             const ADMIN_PASSWORD = "23128951";
             
-            // 從環境獲取 App ID，確保與 Firebase 權限路徑一致
             const appId = typeof __app_id !== 'undefined' ? __app_id : 'massage-booking-default';
 
-            // 狀態管理
             const [user, setUser] = useState(null);
             const [isAdmin, setIsAdmin] = useState(false);
             const [showAdminLogin, setShowAdminLogin] = useState(false);
@@ -57,7 +63,6 @@
             const [newDateInput, setNewDateInput] = useState('');
             const [db, setDb] = useState(null);
 
-            // Step 1: 初始化 Firebase 與 身份驗證 (遵守 Rule 3)
             useEffect(() => {
                 const initFirebase = async () => {
                     try {
@@ -67,7 +72,6 @@
                         const firestore = fb.getFirestore(app);
                         setDb(firestore);
 
-                        // 優先使用系統提供的 Token
                         if (typeof __initial_auth_token !== 'undefined' && __initial_auth_token) {
                             await fb.signInWithCustomToken(auth, __initial_auth_token);
                         } else {
@@ -76,7 +80,6 @@
 
                         const unsubscribe = fb.onAuthStateChanged(auth, (u) => {
                             setUser(u);
-                            if (u) console.log("Cloud Auth Success");
                         });
                         return unsubscribe;
                     } catch (e) {
@@ -87,11 +90,9 @@
                 return () => unsub && typeof unsub === 'function' && unsub();
             }, []);
 
-            // Step 2: 設置資料監聽 (遵守 Rule 1 路徑規範)
             useEffect(() => {
                 if (!user || !db) return;
 
-                // 監聽開放日期
                 const dateCol = fb.collection(db, 'artifacts', appId, 'public', 'data', 'available_dates');
                 const unsubDates = fb.onSnapshot(dateCol, 
                     (snap) => {
@@ -101,7 +102,6 @@
                     (error) => console.error("Cloud Dates Sync Error:", error)
                 );
 
-                // 監聽預約紀錄
                 const bookCol = fb.collection(db, 'artifacts', appId, 'public', 'data', 'bookings');
                 const unsubBooks = fb.onSnapshot(bookCol, 
                     (snap) => {
@@ -117,15 +117,12 @@
                 };
             }, [user, db, appId]);
 
-            // 管理功能
             const addDate = async () => {
                 if(!newDateInput || !db || !user) return;
                 setIsSyncing(true);
                 try {
                     await fb.addDoc(fb.collection(db, 'artifacts', appId, 'public', 'data', 'available_dates'), { val: newDateInput });
                     setNewDateInput('');
-                } catch(e) {
-                    console.error("Add date failed:", e);
                 } finally {
                     setIsSyncing(false);
                 }
@@ -141,7 +138,6 @@
                 await fb.deleteDoc(fb.doc(db, 'artifacts', appId, 'public', 'data', 'bookings', id));
             };
 
-            // 預約提交
             const submitBooking = async () => {
                 if(!userName.trim() || !selectedSlot || !db || !user) return alert("請填寫完整資訊");
                 setIsSyncing(true);
@@ -156,8 +152,7 @@
                     });
                     setBookingConfirmed(true);
                 } catch(e) {
-                    console.error("Booking failed:", e);
-                    alert("預約失敗，請確認網路連線或權限");
+                    alert("預約失敗，請確認連線");
                 } finally {
                     setIsSyncing(false);
                 }
@@ -177,121 +172,136 @@
                 return bookings.some(b => b.date === date && start < (b.startMin + b.duration) && (start + duration) > b.startMin);
             };
 
-            if (isLoading && !user) return <div className="flex h-screen items-center justify-center font-black text-slate-300 italic animate-pulse tracking-widest uppercase">Initializing Cloud System...</div>;
+            if (isLoading && !user) return <div className="flex h-screen items-center justify-center font-black text-slate-400 italic animate-pulse tracking-widest uppercase">Initializing...</div>;
 
             return (
-                <div className="max-w-xl mx-auto my-4 sm:my-10 px-4 animate-up">
-                    <div className="bg-white rounded-[40px] shadow-2xl overflow-hidden border border-slate-100 flex flex-col min-h-[700px]">
+                <div className="w-full min-h-screen py-4 sm:py-10 px-4 flex flex-col items-center">
+                    <div className="w-full max-w-lg bg-white rounded-[32px] sm:rounded-[40px] custom-shadow overflow-hidden flex flex-col min-h-[750px] animate-up border border-slate-200/50">
+                        
                         {/* Header */}
-                        <div className="bg-slate-900 p-8 text-white flex justify-between items-center shrink-0">
-                            <div>
-                                <h1 className="text-2xl font-black italic tracking-tighter">SKY VISION</h1>
-                                <p className="text-[8px] font-bold opacity-50 uppercase tracking-[0.4em]">Resource Dispatcher v9.2</p>
-                            </div>
-                            <div className="flex gap-2">
-                                <button onClick={() => setShowAdminLogin(true)} className="text-[9px] bg-blue-600 px-4 py-2 rounded-full font-black uppercase tracking-widest hover:bg-blue-500 shadow-lg shadow-blue-500/20">Admin</button>
+                        <div className="bg-slate-900 px-6 sm:px-10 py-8 text-white shrink-0 relative overflow-hidden">
+                            <div className="absolute top-0 right-0 w-32 h-32 bg-blue-600/10 rounded-full -mr-16 -mt-16 blur-3xl"></div>
+                            <div className="relative z-10 flex justify-between items-center">
+                                <div>
+                                    <h1 className="text-2xl sm:text-3xl font-black italic tracking-tighter leading-none">SKY VISION</h1>
+                                    <p className="text-[9px] font-bold opacity-50 uppercase tracking-[0.3em] mt-1.5 flex items-center gap-2">
+                                        <span className="w-1.5 h-1.5 bg-green-400 rounded-full animate-pulse"></span>
+                                        Smart Dispatcher v9.3
+                                    </p>
+                                </div>
+                                <div className="flex gap-2">
+                                    <button onClick={() => fetchBookings()} className="w-9 h-9 bg-white/10 rounded-full flex items-center justify-center hover:bg-white/20 transition-all border border-white/10 active:scale-90">
+                                        <i className={`fas fa-sync-alt text-[10px] ${isSyncing ? 'animate-spin' : ''}`}></i>
+                                    </button>
+                                    <button onClick={() => setShowAdminLogin(true)} className="px-4 py-2 bg-blue-600 hover:bg-blue-500 rounded-full text-[10px] font-black uppercase tracking-widest transition-all shadow-lg shadow-blue-600/20 active:scale-90">Admin</button>
+                                </div>
                             </div>
                         </div>
 
                         {/* Admin Login Modal */}
                         {showAdminLogin && !isAdmin && (
-                            <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-900/80 backdrop-blur-sm p-4">
-                                <div className="bg-white p-8 rounded-[32px] w-full max-w-xs shadow-2xl">
-                                    <h3 className="text-xl font-black mb-6 italic text-center uppercase tracking-widest">Manager Auth</h3>
-                                    <input type="password" autoFocus placeholder="Password..." className="w-full border-b-2 border-slate-200 py-3 mb-6 outline-none font-black text-2xl text-center focus:border-blue-600" onChange={e => setPwd(e.target.value)} onKeyDown={e => e.key === 'Enter' && (pwd === ADMIN_PASSWORD ? setIsAdmin(true) : alert('Wrong Password'))}/>
-                                    <div className="flex gap-2">
-                                        <button onClick={() => setShowAdminLogin(false)} className="flex-1 py-3 text-slate-400 font-bold text-xs uppercase">Cancel</button>
-                                        <button onClick={() => pwd === ADMIN_PASSWORD ? setIsAdmin(true) : alert('Wrong Password')} className="flex-1 bg-slate-900 text-white rounded-xl py-3 font-bold text-xs">VERIFY</button>
+                            <div className="fixed inset-0 z-[100] flex items-center justify-center bg-slate-900/90 backdrop-blur-md p-6">
+                                <div className="bg-white p-8 rounded-[36px] w-full max-w-sm shadow-2xl animate-up">
+                                    <h3 className="text-xl font-black mb-6 italic text-center uppercase tracking-widest text-slate-800">Identity Verification</h3>
+                                    <input type="password" autoFocus placeholder="Passcode..." className="w-full border-b-2 border-slate-100 py-4 mb-8 outline-none font-black text-3xl text-center focus:border-blue-600 transition-all" onChange={e => setPwd(e.target.value)} onKeyDown={e => e.key === 'Enter' && (pwd === ADMIN_PASSWORD ? setIsAdmin(true) : alert('Passcode Invalid'))}/>
+                                    <div className="flex gap-3">
+                                        <button onClick={() => setShowAdminLogin(false)} className="flex-1 py-4 text-slate-400 font-bold text-xs uppercase hover:text-slate-600 transition-all">Cancel</button>
+                                        <button onClick={() => pwd === ADMIN_PASSWORD ? setIsAdmin(true) : alert('Passcode Invalid')} className="flex-1 bg-slate-900 text-white rounded-2xl py-4 font-black text-xs uppercase tracking-widest shadow-xl">Verify</button>
                                     </div>
                                 </div>
                             </div>
                         )}
 
-                        <div className="flex-1 p-8 overflow-y-auto scrollbar-hide">
+                        {/* Body */}
+                        <div className="flex-1 p-6 sm:p-10 overflow-y-auto scrollbar-hide">
                             {isAdmin ? (
                                 <div className="space-y-10 animate-fade-in">
                                     <div className="flex justify-between items-center">
-                                        <h2 className="text-xl font-black italic underline decoration-blue-500 underline-offset-8">管理員後台</h2>
-                                        <button onClick={() => setIsAdmin(false)} className="text-[10px] font-bold text-slate-400 uppercase tracking-widest border-b border-slate-200">Exit Admin</button>
+                                        <h2 className="text-xl font-black italic underline decoration-blue-600 decoration-4 underline-offset-8">Admin Dashboard</h2>
+                                        <button onClick={() => setIsAdmin(false)} className="text-[10px] font-bold text-slate-400 uppercase tracking-widest border-b border-slate-200 pb-1">Exit Portal</button>
                                     </div>
 
-                                    <div className="bg-slate-50 p-6 rounded-3xl border border-slate-100 shadow-inner">
-                                        <label className="text-[10px] font-black text-slate-400 mb-4 block tracking-widest uppercase">新增開放日期</label>
+                                    <div className="bg-slate-50 p-6 rounded-[28px] border border-slate-100 shadow-inner">
+                                        <label className="text-[10px] font-black text-slate-400 mb-4 block tracking-widest uppercase">Open Availability</label>
                                         <div className="flex gap-2">
-                                            <input type="date" value={newDateInput} onChange={e => setNewDateInput(e.target.value)} className="flex-1 bg-white border border-slate-200 rounded-xl px-4 py-2 text-sm font-bold outline-none focus:ring-2 focus:ring-blue-500/20" />
-                                            <button onClick={addDate} disabled={isSyncing} className="bg-blue-600 text-white px-6 rounded-xl font-black text-xs hover:bg-blue-700 shadow-lg shadow-blue-500/20">
-                                                {isSyncing ? <i className="fas fa-circle-notch animate-spin"></i> : 'ADD'}
-                                            </button>
+                                            <input type="date" value={newDateInput} onChange={e => setNewDateInput(e.target.value)} className="flex-1 bg-white border border-slate-200 rounded-xl px-4 py-2.5 text-sm font-bold outline-none focus:ring-4 focus:ring-blue-500/10 transition-all" />
+                                            <button onClick={addDate} disabled={isSyncing} className="bg-slate-900 text-white px-6 rounded-xl font-black text-xs hover:bg-black transition-all shadow-lg">ADD</button>
                                         </div>
                                         <div className="flex flex-wrap gap-2 mt-6">
                                             {availableDates.map(d => (
-                                                <span key={d.id} className="bg-white border border-slate-200 pl-4 pr-2 py-1.5 rounded-full text-[10px] font-bold flex items-center gap-3 shadow-sm">
+                                                <div key={d.id} className="bg-white border border-slate-200 pl-4 pr-1.5 py-1.5 rounded-full text-[10px] font-black flex items-center gap-3 shadow-sm hover:border-slate-300 transition-all group">
                                                     {d.val}
-                                                    <button onClick={() => removeDate(d.id)} className="w-5 h-5 flex items-center justify-center bg-red-50 text-red-500 rounded-full hover:bg-red-500 hover:text-white transition-all"><i className="fas fa-times scale-75"></i></button>
-                                                </span>
+                                                    <button onClick={() => removeDate(d.id)} className="w-6 h-6 flex items-center justify-center bg-red-50 text-red-500 rounded-full hover:bg-red-500 hover:text-white transition-all"><i className="fas fa-times scale-75"></i></button>
+                                                </div>
                                             ))}
                                         </div>
                                     </div>
 
-                                    <div className="space-y-4">
-                                        <h3 className="text-[11px] font-black text-slate-400 uppercase tracking-[0.2em] px-1">全體預約數據監控</h3>
+                                    <div className="space-y-5">
+                                        <h3 className="text-[11px] font-black text-slate-400 uppercase tracking-[0.2em] px-1 border-l-4 border-slate-900 ml-1 pl-3">Record Monitor</h3>
                                         <div className="space-y-3">
-                                            {bookings.length === 0 && <p className="text-xs text-slate-300 italic text-center py-10 font-bold uppercase tracking-widest">No Records Found</p>}
+                                            {bookings.length === 0 && <p className="text-xs text-slate-300 italic text-center py-10 font-bold uppercase tracking-widest">Database Empty</p>}
                                             {bookings.sort((a,b) => b.createdAt - a.createdAt).map(b => (
-                                                <div key={b.id} className="bg-white border border-slate-100 p-4 rounded-2xl flex justify-between items-center shadow-sm hover:border-blue-300 transition-all border-l-4 border-l-slate-900 group">
+                                                <div key={b.id} className="bg-white border border-slate-100 p-5 rounded-2xl flex justify-between items-center shadow-sm hover:border-blue-200 transition-all group border-l-[6px] border-l-slate-900">
                                                     <div>
-                                                        <div className="flex items-center gap-3 mb-1">
-                                                            <span className="bg-slate-900 text-white text-[9px] px-2 py-0.5 rounded font-black italic tracking-tighter uppercase">Cloud.Sync</span>
-                                                            <span className="font-black text-slate-800 text-lg tracking-tight">{b.date} / {b.time}</span>
+                                                        <div className="flex items-center gap-3 mb-1.5">
+                                                            <span className="font-black text-slate-800 text-lg tracking-tight">{b.date} <span className="text-blue-600 ml-1">{b.time}</span></span>
                                                         </div>
-                                                        <p className="text-[10px] font-black text-blue-600 uppercase tracking-widest">{b.name} <span className="text-slate-300 mx-1">/</span> {b.duration}MINS</p>
+                                                        <p className="text-[10px] font-black text-slate-400 uppercase tracking-widest flex items-center gap-2">
+                                                            <i className="fas fa-user-circle"></i> {b.name} <span className="opacity-30">/</span> {b.duration}MIN
+                                                        </p>
                                                     </div>
-                                                    <button onClick={() => deleteBooking(b.id)} className="w-10 h-10 flex items-center justify-center text-slate-200 hover:text-red-500 hover:bg-red-50 rounded-full transition-all"><i className="fas fa-trash-alt text-sm"></i></button>
+                                                    <button onClick={() => deleteBooking(b.id)} className="w-10 h-10 flex items-center justify-center text-slate-200 hover:text-red-500 hover:bg-red-50 rounded-full transition-all group-hover:scale-110"><i className="fas fa-trash-alt text-sm"></i></button>
                                                 </div>
                                             ))}
                                         </div>
                                     </div>
                                 </div>
                             ) : !bookingConfirmed ? (
-                                <div className="space-y-10 animate-fade-in">
+                                <div className="space-y-12 animate-fade-in pb-10">
+                                    {/* Section 01 */}
                                     <div>
-                                        <label className="text-[10px] font-black text-slate-400 mb-5 block tracking-[0.3em] uppercase italic border-l-4 border-blue-600 pl-3 leading-none">01 / 選取預約日期</label>
-                                        <div className="flex gap-2 overflow-x-auto pb-4 scrollbar-hide">
-                                            {availableDates.length === 0 && !isLoading && <p className="text-[10px] text-slate-400 font-bold italic p-3 bg-slate-50 rounded-2xl w-full text-center">目前無開放時段，請洽詢管理員</p>}
+                                        <label className="text-[11px] font-black text-slate-400 mb-6 block tracking-[0.3em] uppercase italic border-l-4 border-blue-600 pl-4 leading-none py-1">01 / Choose Date</label>
+                                        <div className="flex gap-3 overflow-x-auto pb-6 scrollbar-hide px-1">
+                                            {availableDates.length === 0 && !isLoading && <p className="text-[10px] text-slate-400 font-bold italic p-4 bg-slate-50 rounded-2xl w-full text-center">暫無開放日期，請聯繫管理人員</p>}
                                             {availableDates.map(d => (
-                                                <button key={d.id} onClick={() => {setSelectedDate(d.val); setSelectedSlot(null);}} className={`flex-shrink-0 px-6 py-4 rounded-[24px] border-2 transition-all flex flex-col items-center min-w-[110px] ${selectedDate === d.val ? 'border-blue-600 bg-blue-600 text-white shadow-2xl shadow-blue-500/30 scale-105' : 'border-slate-100 bg-white text-slate-400 hover:border-slate-200'}`}>
-                                                    <span className="text-[10px] font-black opacity-60 mb-1 italic tracking-widest">{d.val.split('-')[1]}/{d.val.split('-')[2]}</span>
-                                                    <span className="text-sm font-black uppercase tracking-tighter">{new Date(d.val).toLocaleDateString('zh-TW', {weekday: 'short'})}</span>
+                                                <button key={d.id} onClick={() => {setSelectedDate(d.val); setSelectedSlot(null);}} className={`flex-shrink-0 px-6 py-5 rounded-[28px] border-2 transition-all flex flex-col items-center min-w-[120px] ${selectedDate === d.val ? 'border-blue-600 bg-blue-600 text-white shadow-2xl shadow-blue-600/30 scale-105' : 'border-slate-100 bg-white text-slate-400 hover:border-slate-200 hover:text-slate-600'}`}>
+                                                    <span className="text-[10px] font-black opacity-60 mb-1.5 italic tracking-[0.2em]">{d.val.split('-')[1]}/{d.val.split('-')[2]}</span>
+                                                    <span className="text-base font-black uppercase tracking-tighter">{new Date(d.val).toLocaleDateString('zh-TW', {weekday: 'short'})}</span>
                                                 </button>
                                             ))}
                                         </div>
                                     </div>
 
-                                    <div className="grid grid-cols-2 gap-8">
+                                    {/* Section 02 & 03 */}
+                                    <div className="grid grid-cols-1 sm:grid-cols-2 gap-10">
                                         <div>
-                                            <label className="text-[10px] font-black text-slate-400 mb-4 block tracking-widest uppercase italic border-l-4 border-blue-600 pl-3">02 / 療程</label>
-                                            <div className="grid grid-cols-2 gap-2">
+                                            <label className="text-[11px] font-black text-slate-400 mb-5 block tracking-[0.3em] uppercase italic border-l-4 border-blue-600 pl-4">02 / Service</label>
+                                            <div className="grid grid-cols-2 gap-3 px-1">
                                                 {[30, 60].map(dur => (
-                                                    <button key={dur} onClick={() => {setSelectedDuration(dur); setSelectedSlot(null);}} className={`py-4 rounded-2xl border-2 font-black transition-all flex flex-col items-center justify-center ${selectedDuration === dur ? 'border-blue-600 bg-blue-50 text-blue-700 shadow-lg' : 'border-slate-100 text-slate-300'}`}>
-                                                        <span className="text-lg">{dur}</span>
-                                                        <span className="text-[8px] uppercase">min</span>
+                                                    <button key={dur} onClick={() => {setSelectedDuration(dur); setSelectedSlot(null);}} className={`py-5 rounded-2xl border-2 font-black transition-all flex flex-col items-center justify-center gap-1 ${selectedDuration === dur ? 'border-blue-600 bg-blue-50 text-blue-700 shadow-lg' : 'border-slate-100 text-slate-400 bg-white hover:border-slate-200'}`}>
+                                                        <span className="text-xl leading-none">{dur}</span>
+                                                        <span className="text-[8px] uppercase tracking-widest opacity-60">MIN</span>
                                                     </button>
                                                 ))}
                                             </div>
                                         </div>
                                         <div>
-                                            <label className="text-[10px] font-black text-slate-400 mb-4 block tracking-widest uppercase italic border-l-4 border-blue-600 pl-3">03 / 姓名</label>
-                                            <input type="text" value={userName} onChange={e => setUserName(e.target.value)} className="w-full bg-slate-50 border-0 border-b-2 border-slate-200 py-3 outline-none font-black text-2xl focus:border-blue-600 transition-all text-slate-800 placeholder:text-slate-200" placeholder="NAME..." />
+                                            <label className="text-[11px] font-black text-slate-400 mb-5 block tracking-[0.3em] uppercase italic border-l-4 border-blue-600 pl-4">03 / Identity</label>
+                                            <div className="px-1">
+                                                <input type="text" value={userName} onChange={e => setUserName(e.target.value)} className="w-full bg-slate-50 border-0 border-b-2 border-slate-200 py-3 outline-none font-black text-2xl focus:border-blue-600 transition-all text-slate-800 placeholder:text-slate-200" placeholder="Full Name..." />
+                                            </div>
                                         </div>
                                     </div>
 
+                                    {/* Section 04 */}
                                     <div>
-                                        <label className="text-[10px] font-black text-slate-400 mb-5 block tracking-[0.3em] uppercase italic border-l-4 border-blue-600 pl-3 leading-none">04 / 時段 (18:30 起)</label>
-                                        <div className="grid grid-cols-4 gap-3">
+                                        <label className="text-[11px] font-black text-slate-400 mb-6 block tracking-[0.3em] uppercase italic border-l-4 border-blue-600 pl-4 leading-none py-1">04 / Start Time</label>
+                                        <div className="grid grid-cols-4 gap-3 px-1">
                                             {slots.map(s => {
                                                 const occ = isOccupied(selectedDate, s.total, selectedDuration);
                                                 return (
-                                                    <button key={s.label} disabled={occ || !selectedDate} onClick={() => setSelectedSlot(s)} className={`py-4 rounded-2xl text-xs font-black transition-all ${occ ? 'bg-slate-50 text-slate-100 border-0 opacity-40 cursor-not-allowed border-dashed border border-slate-200' : selectedSlot?.label === s.label ? 'bg-slate-900 text-white shadow-xl scale-105 ring-4 ring-slate-100' : 'bg-white border border-slate-200 text-slate-600 hover:border-slate-400 hover:shadow-md'}`}>
+                                                    <button key={s.label} disabled={occ || !selectedDate} onClick={() => setSelectedSlot(s)} className={`py-4 rounded-xl text-xs font-black transition-all ${occ ? 'bg-slate-100 text-slate-300 border-0 opacity-40 cursor-not-allowed border-dashed border border-slate-200' : selectedSlot?.label === s.label ? 'bg-slate-900 text-white shadow-2xl scale-105 ring-4 ring-slate-100' : 'bg-white border border-slate-200 text-slate-600 hover:border-blue-600 hover:text-blue-600 hover:shadow-md'}`}>
                                                         {s.label}
                                                     </button>
                                                 );
@@ -299,34 +309,40 @@
                                         </div>
                                     </div>
 
-                                    <button disabled={!selectedSlot || !userName || isSyncing} onClick={submitBooking} className={`w-full py-6 rounded-[2.5rem] font-black text-xl shadow-2xl transition-all flex items-center justify-center gap-4 ${!selectedSlot || !userName || isSyncing ? 'bg-slate-100 text-slate-300' : 'bg-gradient-to-r from-blue-600 to-indigo-600 text-white hover:brightness-110 active:scale-95 shadow-blue-500/30'}`}>
-                                        {isSyncing ? <i className="fas fa-circle-notch animate-spin text-2xl"></i> : '立即預約按摩時段'}
-                                    </button>
+                                    <div className="px-1 pt-4">
+                                        <button disabled={!selectedSlot || !userName || isSyncing} onClick={submitBooking} className={`booking-btn w-full py-6 rounded-[2.5rem] font-black text-xl shadow-2xl transition-all flex items-center justify-center gap-4 ${!selectedSlot || !userName || isSyncing ? 'bg-slate-100 text-slate-300 shadow-none' : 'bg-gradient-to-r from-blue-600 to-indigo-600 text-white hover:brightness-110 shadow-blue-600/30'}`}>
+                                            {isSyncing ? <i className="fas fa-circle-notch animate-spin text-2xl"></i> : 'SECURE BOOKING'}
+                                            {!isSyncing && <i className="fas fa-arrow-right text-sm opacity-50"></i>}
+                                        </button>
+                                    </div>
                                 </div>
                             ) : (
-                                <div className="p-20 text-center space-y-10 animate-fade-in">
-                                    <div className="relative inline-block">
-                                        <div className="w-28 h-28 bg-green-500 text-white rounded-full flex items-center justify-center mx-auto shadow-2xl relative z-10 animate-bounce">
-                                            <i className="fas fa-check text-5xl"></i>
+                                <div className="p-20 text-center space-y-12 animate-fade-in">
+                                    <div className="relative inline-block scale-125">
+                                        <div className="w-24 h-24 bg-green-500 text-white rounded-full flex items-center justify-center mx-auto shadow-2xl relative z-10 animate-bounce">
+                                            <i className="fas fa-check text-4xl"></i>
                                         </div>
                                         <div className="absolute inset-0 bg-green-500 rounded-full animate-ping opacity-20"></div>
                                     </div>
                                     <div>
-                                        <h2 className="text-4xl font-black italic tracking-tighter uppercase text-slate-900">Success!</h2>
-                                        <p className="text-slate-400 font-bold uppercase tracking-[0.4em] text-[9px] mt-6">預約成功，雲端資料庫已即時同步</p>
+                                        <h2 className="text-4xl font-black italic tracking-tighter uppercase text-slate-900 leading-none">SUCCESS!</h2>
+                                        <p className="text-slate-400 font-bold uppercase tracking-[0.4em] text-[10px] mt-6 leading-relaxed">預約資料已成功排入雲端中樞<br/>請準時抵達享受療程</p>
                                     </div>
-                                    <button onClick={() => {setBookingConfirmed(false); setUserName(''); setSelectedSlot(null);}} className="text-slate-400 hover:text-blue-600 font-black text-[10px] tracking-widest uppercase transition-all flex items-center justify-center gap-3 mx-auto py-4">
-                                        <i className="fas fa-arrow-left"></i> 返回預約首頁
+                                    <button onClick={() => {setBookingConfirmed(false); setUserName(''); setSelectedSlot(null);}} className="text-slate-400 hover:text-blue-600 font-black text-[10px] tracking-widest uppercase transition-all flex items-center justify-center gap-3 mx-auto py-4 group">
+                                        <i className="fas fa-arrow-left group-hover:-translate-x-2 transition-transform"></i> BACK TO DISPATCHER
                                     </button>
                                 </div>
                             )}
                         </div>
 
-                        <div className="bg-slate-50 p-8 border-t border-slate-100 text-center shrink-0">
-                            <p className="text-[7px] text-slate-400 font-black tracking-[0.6em] uppercase leading-relaxed italic">
-                                SKY VISION ENTERPRISE CLOUD INFRASTRUCTURE<br/>
-                                <span className="text-blue-500">Node: {appId}</span> | Single-File System v9.2
-                            </p>
+                        {/* Footer */}
+                        <div className="bg-white px-10 py-8 border-t border-slate-100 text-center shrink-0">
+                            <div className="flex flex-col items-center gap-3">
+                                <p className="text-[8px] text-slate-400 font-black tracking-[0.6em] uppercase leading-relaxed italic opacity-70">
+                                    SKY VISION LEAGUE - DIGITAL INFRASTRUCTURE<br/>
+                                    <span className="text-blue-500/50">NODE: {appId}</span> | Enterprise Cloud v9.3
+                                </p>
+                            </div>
                         </div>
                     </div>
                 </div>
