@@ -3,235 +3,331 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Sky Vision 按摩預約調度系統</title>
-    <!-- 引入 React 與基礎套件 -->
+    <title>Sky Vision 按摩預約系統 v9.2</title>
+    <!-- 核心框架 -->
     <script src="https://unpkg.com/react@18/umd/react.production.min.js"></script>
     <script src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js"></script>
     <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
     <script src="https://cdn.tailwindcss.com"></script>
-    <!-- 引入 FontAwesome 圖標 -->
+    <!-- 雲端資料庫 SDK -->
+    <script type="module">
+        import { initializeApp } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-app.js";
+        import { getFirestore, collection, doc, setDoc, onSnapshot, deleteDoc, query, addDoc } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-firestore.js";
+        import { getAuth, signInAnonymously, onAuthStateChanged, signInWithCustomToken } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-auth.js";
+
+        window.fb = { initializeApp, getFirestore, collection, doc, setDoc, onSnapshot, deleteDoc, query, addDoc, getAuth, signInAnonymously, onAuthStateChanged, signInWithCustomToken };
+    </script>
     <link href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.0.0/css/all.min.css" rel="stylesheet">
     <style>
         @import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;700;900&display=swap');
-        body { font-family: 'Inter', sans-serif; }
+        body { font-family: 'Inter', sans-serif; background-color: #f8fafc; }
         .scrollbar-hide::-webkit-scrollbar { display: none; }
-        .animate-fade-in { animation: fadeIn 0.3s ease-out; }
-        @keyframes fadeIn { from { opacity: 0; transform: translateY(10px); } to { opacity: 1; transform: translateY(0); } }
+        .animate-up { animation: fadeInUp 0.4s ease-out; }
+        @keyframes fadeInUp { from { opacity: 0; transform: translateY(15px); } to { opacity: 1; transform: translateY(0); } }
     </style>
 </head>
-<body class="bg-slate-50 text-slate-900">
+<body>
     <div id="root"></div>
 
     <script type="text/babel">
         const { useState, useEffect, useMemo } = React;
 
         const App = () => {
-            const START_HOUR = 18; const START_MIN = 30; const END_HOUR = 23; const SLOT_INTERVAL = 30;
+            const START_HOUR = 18; const START_MIN = 30; const END_HOUR = 23;
             const ADMIN_PASSWORD = "23128951";
+            
+            // 從環境獲取 App ID，確保與 Firebase 權限路徑一致
+            const appId = typeof __app_id !== 'undefined' ? __app_id : 'massage-booking-default';
 
-            // Lark 串接配置
-            const [larkConfig, setLarkConfig] = useState({ 
-                appId: 'cli_a936584430b8ded2', 
-                appSecret: 'CYSTv1bNrXph5p79YzHKKcWEyb2OAPiD', 
-                appToken: 'XqCWbEx4ZamziBsuKhClW3YPgxf', 
-                tableId: 'tblw0ocVXfvrXyOX',
-                useProxy: true, // 預設開啟代理以解決 GitHub Pages 的 CORS 問題
-                proxyUrl: 'https://corsproxy.io/?' // 免費的 CORS 代理服務
-            });
-
+            // 狀態管理
+            const [user, setUser] = useState(null);
             const [isAdmin, setIsAdmin] = useState(false);
-            const [availableDates, setAvailableDates] = useState(['2025-05-20', '2025-05-22', '2025-05-23', '2025-05-24', '2025-05-25']);
+            const [showAdminLogin, setShowAdminLogin] = useState(false);
+            const [pwd, setPwd] = useState('');
+            
+            const [availableDates, setAvailableDates] = useState([]);
+            const [bookings, setBookedSlots] = useState([]);
             const [selectedDate, setSelectedDate] = useState('');
             const [selectedDuration, setSelectedDuration] = useState(30);
             const [userName, setUserName] = useState('');
-            const [bookedSlots, setBookedSlots] = useState([]); 
             const [selectedSlot, setSelectedSlot] = useState(null);
             const [bookingConfirmed, setBookingConfirmed] = useState(false);
-            const [editingRecordId, setEditingRecordId] = useState(null); 
+            const [isLoading, setIsLoading] = useState(true);
             const [isSyncing, setIsSyncing] = useState(false);
-            const [errorMsg, setErrorMsg] = useState('');
-            const [errorType, setErrorType] = useState(null);
+            const [newDateInput, setNewDateInput] = useState('');
+            const [db, setDb] = useState(null);
 
-            const fetchWithRetry = async (url, options, retries = 3) => {
-                const finalUrl = larkConfig.useProxy ? `${larkConfig.proxyUrl}${encodeURIComponent(url)}` : url;
+            // Step 1: 初始化 Firebase 與 身份驗證 (遵守 Rule 3)
+            useEffect(() => {
+                const initFirebase = async () => {
+                    try {
+                        const firebaseConfig = JSON.parse(__firebase_config);
+                        const app = fb.initializeApp(firebaseConfig);
+                        const auth = fb.getAuth(app);
+                        const firestore = fb.getFirestore(app);
+                        setDb(firestore);
+
+                        // 優先使用系統提供的 Token
+                        if (typeof __initial_auth_token !== 'undefined' && __initial_auth_token) {
+                            await fb.signInWithCustomToken(auth, __initial_auth_token);
+                        } else {
+                            await fb.signInAnonymously(auth);
+                        }
+
+                        const unsubscribe = fb.onAuthStateChanged(auth, (u) => {
+                            setUser(u);
+                            if (u) console.log("Cloud Auth Success");
+                        });
+                        return unsubscribe;
+                    } catch (e) {
+                        console.error("Firebase init failed:", e);
+                    }
+                };
+                const unsub = initFirebase();
+                return () => unsub && typeof unsub === 'function' && unsub();
+            }, []);
+
+            // Step 2: 設置資料監聽 (遵守 Rule 1 路徑規範)
+            useEffect(() => {
+                if (!user || !db) return;
+
+                // 監聽開放日期
+                const dateCol = fb.collection(db, 'artifacts', appId, 'public', 'data', 'available_dates');
+                const unsubDates = fb.onSnapshot(dateCol, 
+                    (snap) => {
+                        const dates = snap.docs.map(d => ({id: d.id, ...d.data()}));
+                        setAvailableDates(dates.sort((a,b) => (a.val || '').localeCompare(b.val || '')));
+                    },
+                    (error) => console.error("Cloud Dates Sync Error:", error)
+                );
+
+                // 監聽預約紀錄
+                const bookCol = fb.collection(db, 'artifacts', appId, 'public', 'data', 'bookings');
+                const unsubBooks = fb.onSnapshot(bookCol, 
+                    (snap) => {
+                        setBookedSlots(snap.docs.map(d => ({id: d.id, ...d.data()})));
+                        setIsLoading(false);
+                    },
+                    (error) => console.error("Cloud Bookings Sync Error:", error)
+                );
+
+                return () => {
+                    unsubDates();
+                    unsubBooks();
+                };
+            }, [user, db, appId]);
+
+            // 管理功能
+            const addDate = async () => {
+                if(!newDateInput || !db || !user) return;
+                setIsSyncing(true);
                 try {
-                    const response = await fetch(finalUrl, options);
-                    if (!response.ok) {
-                        const errorData = await response.json().catch(() => ({}));
-                        throw new Error(errorData.msg || `Lark 回傳錯誤 ${response.status}`);
-                    }
-                    return await response.json();
-                } catch (err) {
-                    if (err.name === 'TypeError' || err.message.includes('fetch')) {
-                        setErrorType('CORS');
-                        throw new Error("連線被安全性攔截。這通常是因為 Lark 不允許瀏覽器端直接連線。");
-                    }
-                    throw err;
+                    await fb.addDoc(fb.collection(db, 'artifacts', appId, 'public', 'data', 'available_dates'), { val: newDateInput });
+                    setNewDateInput('');
+                } catch(e) {
+                    console.error("Add date failed:", e);
+                } finally {
+                    setIsSyncing(false);
                 }
             };
 
-            const getLarkToken = async () => {
-                const res = await fetchWithRetry("https://open.larksuite.com/open-apis/auth/v3/tenant_access_token/internal", {
-                    method: 'POST',
-                    headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify({ app_id: larkConfig.appId, app_secret: larkConfig.appSecret })
-                });
-                return res.tenant_access_token;
+            const removeDate = async (id) => {
+                if(!confirm("確定移除此日期？") || !db || !user) return;
+                await fb.deleteDoc(fb.doc(db, 'artifacts', appId, 'public', 'data', 'available_dates', id));
             };
 
-            const fetchBookings = async () => {
-                if (!larkConfig.tableId) return;
+            const deleteBooking = async (id) => {
+                if(!confirm("確定刪除此預約紀錄？") || !db || !user) return;
+                await fb.deleteDoc(fb.doc(db, 'artifacts', appId, 'public', 'data', 'bookings', id));
+            };
+
+            // 預約提交
+            const submitBooking = async () => {
+                if(!userName.trim() || !selectedSlot || !db || !user) return alert("請填寫完整資訊");
                 setIsSyncing(true);
-                setErrorMsg('');
-                setErrorType(null);
                 try {
-                    const token = await getLarkToken();
-                    const res = await fetchWithRetry(`https://open.larksuite.com/open-apis/bitable/v1/apps/${larkConfig.appToken}/tables/${larkConfig.tableId}/records?page_size=100`, {
-                        method: 'GET',
-                        headers: { 'Authorization': `Bearer ${token}`, 'Content-Type': 'application/json' }
+                    await fb.addDoc(fb.collection(db, 'artifacts', appId, 'public', 'data', 'bookings'), {
+                        name: userName,
+                        date: selectedDate,
+                        time: selectedSlot.label,
+                        duration: selectedDuration,
+                        startMin: selectedSlot.total,
+                        createdAt: Date.now()
                     });
-                    if (res.data?.items) {
-                        setBookedSlots(res.data.items.map(item => ({
-                            id: item.record_id,
-                            date: item.fields.Date,
-                            timeString: item.fields.Time,
-                            duration: item.fields.Duration,
-                            userName: item.fields.Name,
-                            start: parseInt(item.fields.Time.split(':')[0]) * 60 + parseInt(item.fields.Time.split(':')[1])
-                        })));
-                    }
-                } catch (e) { 
-                    setErrorMsg(e.message);
-                } finally { setIsSyncing(false); }
+                    setBookingConfirmed(true);
+                } catch(e) {
+                    console.error("Booking failed:", e);
+                    alert("預約失敗，請確認網路連線或權限");
+                } finally {
+                    setIsSyncing(false);
+                }
             };
-
-            useEffect(() => { fetchBookings(); }, []);
 
             const slots = useMemo(() => {
                 const s = [];
                 let current = START_HOUR * 60 + START_MIN;
-                while (current + selectedDuration <= END_HOUR * 60) {
-                    s.push({ time: `${Math.floor(current/60).toString().padStart(2,'0')}:${(current%60).toString().padStart(2,'0')}`, totalMinutes: current });
-                    current += SLOT_INTERVAL;
+                while (current + 30 <= END_HOUR * 60) {
+                    s.push({ label: `${Math.floor(current/60).toString().padStart(2,'0')}:${(current%60).toString().padStart(2,'0')}`, total: current });
+                    current += 30;
                 }
                 return s;
-            }, [selectedDuration]);
+            }, []);
 
-            const handleBooking = async () => {
-                if (!userName.trim()) return alert("請填寫姓名");
-                setIsSyncing(true);
-                try {
-                    const token = await getLarkToken();
-                    const url = `https://open.larksuite.com/open-apis/bitable/v1/apps/${larkConfig.appToken}/tables/${larkConfig.tableId}/records`;
-                    
-                    await fetchWithRetry(url, {
-                        method: 'POST',
-                        headers: { 'Authorization': `Bearer ${token}`, 'Content-Type': 'application/json' },
-                        body: JSON.stringify({ fields: { "Name": userName, "Date": selectedDate, "Time": selectedSlot.time, "Duration": selectedDuration } })
-                    });
-                    setBookingConfirmed(true);
-                    fetchBookings();
-                } catch (e) { alert("操作失敗: " + e.message); } finally { setIsSyncing(false); }
+            const isOccupied = (date, start, duration) => {
+                return bookings.some(b => b.date === date && start < (b.startMin + b.duration) && (start + duration) > b.startMin);
             };
 
-            return (
-                <div className="max-w-xl mx-auto my-10 bg-white rounded-[40px] shadow-2xl overflow-hidden border border-slate-100 min-h-[600px] flex flex-col animate-fade-in">
-                    <div className="bg-slate-900 p-8 text-white flex justify-between items-center shrink-0">
-                        <div>
-                            <h1 className="text-2xl font-black italic tracking-tighter italic">SKY VISION</h1>
-                            <p className="text-[9px] font-bold opacity-40 uppercase tracking-widest italic">Smart Dispatcher</p>
-                        </div>
-                        <div className="flex gap-2">
-                            <button onClick={fetchBookings} className={`p-2 bg-slate-800 rounded-full ${isSyncing ? 'animate-spin' : ''}`}>
-                                <i className="fas fa-sync-alt text-xs"></i>
-                            </button>
-                            <button onClick={() => setIsAdmin(!isAdmin)} className="text-[10px] bg-slate-800 px-4 py-2 rounded-full font-bold uppercase tracking-widest border border-slate-700">管理端</button>
-                        </div>
-                    </div>
+            if (isLoading && !user) return <div className="flex h-screen items-center justify-center font-black text-slate-300 italic animate-pulse tracking-widest uppercase">Initializing Cloud System...</div>;
 
-                    <div className="flex-1 overflow-y-auto scrollbar-hide">
-                        {errorType === 'CORS' && (
-                            <div className="m-6 p-6 bg-red-50 border border-red-100 rounded-3xl animate-fade-in">
-                                <h4 className="text-red-800 font-black text-sm mb-3 flex items-center gap-2">
-                                    <i className="fas fa-shield-virus"></i> 技術安全性攔截 (CORS)
-                                </h4>
-                                <div className="space-y-4 text-[11px] text-red-700 leading-relaxed font-medium">
-                                    <p>周董，這筆請求被 Lark 伺服器阻擋了。這通常發生在「外部瀏覽器」直接存取金鑰時。</p>
-                                    <div className="bg-white p-4 rounded-2xl border border-red-50">
-                                        <p className="font-black mb-2 text-slate-800 uppercase">目前採取的抗風險策略：</p>
-                                        <p>程式已自動開啟代理模式（Proxy Mode）嘗試繞過限制。若仍失敗，請確認是否在 <strong>Lark 工作台</strong> 內打開此頁面。</p>
+            return (
+                <div className="max-w-xl mx-auto my-4 sm:my-10 px-4 animate-up">
+                    <div className="bg-white rounded-[40px] shadow-2xl overflow-hidden border border-slate-100 flex flex-col min-h-[700px]">
+                        {/* Header */}
+                        <div className="bg-slate-900 p-8 text-white flex justify-between items-center shrink-0">
+                            <div>
+                                <h1 className="text-2xl font-black italic tracking-tighter">SKY VISION</h1>
+                                <p className="text-[8px] font-bold opacity-50 uppercase tracking-[0.4em]">Resource Dispatcher v9.2</p>
+                            </div>
+                            <div className="flex gap-2">
+                                <button onClick={() => setShowAdminLogin(true)} className="text-[9px] bg-blue-600 px-4 py-2 rounded-full font-black uppercase tracking-widest hover:bg-blue-500 shadow-lg shadow-blue-500/20">Admin</button>
+                            </div>
+                        </div>
+
+                        {/* Admin Login Modal */}
+                        {showAdminLogin && !isAdmin && (
+                            <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-900/80 backdrop-blur-sm p-4">
+                                <div className="bg-white p-8 rounded-[32px] w-full max-w-xs shadow-2xl">
+                                    <h3 className="text-xl font-black mb-6 italic text-center uppercase tracking-widest">Manager Auth</h3>
+                                    <input type="password" autoFocus placeholder="Password..." className="w-full border-b-2 border-slate-200 py-3 mb-6 outline-none font-black text-2xl text-center focus:border-blue-600" onChange={e => setPwd(e.target.value)} onKeyDown={e => e.key === 'Enter' && (pwd === ADMIN_PASSWORD ? setIsAdmin(true) : alert('Wrong Password'))}/>
+                                    <div className="flex gap-2">
+                                        <button onClick={() => setShowAdminLogin(false)} className="flex-1 py-3 text-slate-400 font-bold text-xs uppercase">Cancel</button>
+                                        <button onClick={() => pwd === ADMIN_PASSWORD ? setIsAdmin(true) : alert('Wrong Password')} className="flex-1 bg-slate-900 text-white rounded-xl py-3 font-bold text-xs">VERIFY</button>
                                     </div>
                                 </div>
                             </div>
                         )}
 
-                        {isAdmin ? (
-                            <div className="p-8 space-y-6">
-                                <div className="bg-slate-50 p-6 rounded-3xl border border-slate-100">
-                                    <h3 className="text-[10px] font-black text-slate-400 uppercase tracking-widest mb-4">系統參數監控</h3>
-                                    <div className="flex items-center justify-between text-xs font-bold">
-                                        <span>代理模式狀態</span>
-                                        <span className="text-green-600">已開啟 (corsproxy.io)</span>
+                        <div className="flex-1 p-8 overflow-y-auto scrollbar-hide">
+                            {isAdmin ? (
+                                <div className="space-y-10 animate-fade-in">
+                                    <div className="flex justify-between items-center">
+                                        <h2 className="text-xl font-black italic underline decoration-blue-500 underline-offset-8">管理員後台</h2>
+                                        <button onClick={() => setIsAdmin(false)} className="text-[10px] font-bold text-slate-400 uppercase tracking-widest border-b border-slate-200">Exit Admin</button>
+                                    </div>
+
+                                    <div className="bg-slate-50 p-6 rounded-3xl border border-slate-100 shadow-inner">
+                                        <label className="text-[10px] font-black text-slate-400 mb-4 block tracking-widest uppercase">新增開放日期</label>
+                                        <div className="flex gap-2">
+                                            <input type="date" value={newDateInput} onChange={e => setNewDateInput(e.target.value)} className="flex-1 bg-white border border-slate-200 rounded-xl px-4 py-2 text-sm font-bold outline-none focus:ring-2 focus:ring-blue-500/20" />
+                                            <button onClick={addDate} disabled={isSyncing} className="bg-blue-600 text-white px-6 rounded-xl font-black text-xs hover:bg-blue-700 shadow-lg shadow-blue-500/20">
+                                                {isSyncing ? <i className="fas fa-circle-notch animate-spin"></i> : 'ADD'}
+                                            </button>
+                                        </div>
+                                        <div className="flex flex-wrap gap-2 mt-6">
+                                            {availableDates.map(d => (
+                                                <span key={d.id} className="bg-white border border-slate-200 pl-4 pr-2 py-1.5 rounded-full text-[10px] font-bold flex items-center gap-3 shadow-sm">
+                                                    {d.val}
+                                                    <button onClick={() => removeDate(d.id)} className="w-5 h-5 flex items-center justify-center bg-red-50 text-red-500 rounded-full hover:bg-red-500 hover:text-white transition-all"><i className="fas fa-times scale-75"></i></button>
+                                                </span>
+                                            ))}
+                                        </div>
+                                    </div>
+
+                                    <div className="space-y-4">
+                                        <h3 className="text-[11px] font-black text-slate-400 uppercase tracking-[0.2em] px-1">全體預約數據監控</h3>
+                                        <div className="space-y-3">
+                                            {bookings.length === 0 && <p className="text-xs text-slate-300 italic text-center py-10 font-bold uppercase tracking-widest">No Records Found</p>}
+                                            {bookings.sort((a,b) => b.createdAt - a.createdAt).map(b => (
+                                                <div key={b.id} className="bg-white border border-slate-100 p-4 rounded-2xl flex justify-between items-center shadow-sm hover:border-blue-300 transition-all border-l-4 border-l-slate-900 group">
+                                                    <div>
+                                                        <div className="flex items-center gap-3 mb-1">
+                                                            <span className="bg-slate-900 text-white text-[9px] px-2 py-0.5 rounded font-black italic tracking-tighter uppercase">Cloud.Sync</span>
+                                                            <span className="font-black text-slate-800 text-lg tracking-tight">{b.date} / {b.time}</span>
+                                                        </div>
+                                                        <p className="text-[10px] font-black text-blue-600 uppercase tracking-widest">{b.name} <span className="text-slate-300 mx-1">/</span> {b.duration}MINS</p>
+                                                    </div>
+                                                    <button onClick={() => deleteBooking(b.id)} className="w-10 h-10 flex items-center justify-center text-slate-200 hover:text-red-500 hover:bg-red-50 rounded-full transition-all"><i className="fas fa-trash-alt text-sm"></i></button>
+                                                </div>
+                                            ))}
+                                        </div>
                                     </div>
                                 </div>
-                                <div className="space-y-4">
-                                    <h3 className="text-xs font-black text-slate-400 uppercase tracking-widest">當前預約列表 ({bookedSlots.length})</h3>
-                                    {bookedSlots.map(b => (
-                                        <div key={b.id} className="p-4 bg-white border border-slate-100 rounded-2xl flex justify-between items-center shadow-sm">
-                                            <div className="flex flex-col">
-                                                <span className="text-xs font-black">{b.date} {b.timeString}</span>
-                                                <span className="text-[10px] text-slate-400 font-bold uppercase">{b.userName}</span>
+                            ) : !bookingConfirmed ? (
+                                <div className="space-y-10 animate-fade-in">
+                                    <div>
+                                        <label className="text-[10px] font-black text-slate-400 mb-5 block tracking-[0.3em] uppercase italic border-l-4 border-blue-600 pl-3 leading-none">01 / 選取預約日期</label>
+                                        <div className="flex gap-2 overflow-x-auto pb-4 scrollbar-hide">
+                                            {availableDates.length === 0 && !isLoading && <p className="text-[10px] text-slate-400 font-bold italic p-3 bg-slate-50 rounded-2xl w-full text-center">目前無開放時段，請洽詢管理員</p>}
+                                            {availableDates.map(d => (
+                                                <button key={d.id} onClick={() => {setSelectedDate(d.val); setSelectedSlot(null);}} className={`flex-shrink-0 px-6 py-4 rounded-[24px] border-2 transition-all flex flex-col items-center min-w-[110px] ${selectedDate === d.val ? 'border-blue-600 bg-blue-600 text-white shadow-2xl shadow-blue-500/30 scale-105' : 'border-slate-100 bg-white text-slate-400 hover:border-slate-200'}`}>
+                                                    <span className="text-[10px] font-black opacity-60 mb-1 italic tracking-widest">{d.val.split('-')[1]}/{d.val.split('-')[2]}</span>
+                                                    <span className="text-sm font-black uppercase tracking-tighter">{new Date(d.val).toLocaleDateString('zh-TW', {weekday: 'short'})}</span>
+                                                </button>
+                                            ))}
+                                        </div>
+                                    </div>
+
+                                    <div className="grid grid-cols-2 gap-8">
+                                        <div>
+                                            <label className="text-[10px] font-black text-slate-400 mb-4 block tracking-widest uppercase italic border-l-4 border-blue-600 pl-3">02 / 療程</label>
+                                            <div className="grid grid-cols-2 gap-2">
+                                                {[30, 60].map(dur => (
+                                                    <button key={dur} onClick={() => {setSelectedDuration(dur); setSelectedSlot(null);}} className={`py-4 rounded-2xl border-2 font-black transition-all flex flex-col items-center justify-center ${selectedDuration === dur ? 'border-blue-600 bg-blue-50 text-blue-700 shadow-lg' : 'border-slate-100 text-slate-300'}`}>
+                                                        <span className="text-lg">{dur}</span>
+                                                        <span className="text-[8px] uppercase">min</span>
+                                                    </button>
+                                                ))}
                                             </div>
                                         </div>
-                                    ))}
-                                </div>
-                            </div>
-                        ) : !bookingConfirmed ? (
-                            <div className="p-8 space-y-8 animate-fade-in">
-                                <div>
-                                    <label className="text-[10px] font-black text-slate-400 mb-4 block tracking-widest uppercase italic underline decoration-blue-500 underline-offset-8">01 / 日期選擇</label>
-                                    <div className="flex gap-2 overflow-x-auto pb-2 scrollbar-hide">
-                                        {availableDates.map(d => (
-                                            <button key={d} onClick={() => {setSelectedDate(d); setSelectedSlot(null);}} className={`flex-shrink-0 px-6 py-4 rounded-2xl border-2 transition-all flex flex-col items-center min-w-[100px] ${selectedDate === d ? 'border-blue-600 bg-blue-50 text-blue-700 shadow-xl scale-105 font-black' : 'border-slate-100 text-slate-300'}`}>
-                                                <span className="text-[10px] font-bold opacity-60 mb-1">{d.slice(5)}</span>
-                                                <span className="text-sm uppercase tracking-tighter">{new Date(d).toLocaleDateString('zh-TW', {weekday: 'short'})}</span>
-                                            </button>
-                                        ))}
+                                        <div>
+                                            <label className="text-[10px] font-black text-slate-400 mb-4 block tracking-widest uppercase italic border-l-4 border-blue-600 pl-3">03 / 姓名</label>
+                                            <input type="text" value={userName} onChange={e => setUserName(e.target.value)} className="w-full bg-slate-50 border-0 border-b-2 border-slate-200 py-3 outline-none font-black text-2xl focus:border-blue-600 transition-all text-slate-800 placeholder:text-slate-200" placeholder="NAME..." />
+                                        </div>
                                     </div>
-                                </div>
-                                <div>
-                                    <label className="text-[10px] font-black text-slate-400 mb-4 block tracking-widest uppercase italic underline decoration-blue-500 underline-offset-8">02 / 預約姓名</label>
-                                    <input type="text" value={userName} onChange={e => setUserName(e.target.value)} className="w-full border-b-2 border-slate-100 py-3 outline-none font-black text-2xl focus:border-blue-600 transition-all text-slate-800" placeholder="NAME..." />
-                                </div>
-                                <div>
-                                    <label className="text-[10px] font-black text-slate-400 mb-4 block tracking-widest uppercase italic underline decoration-blue-500 underline-offset-8">03 / 時段 (18:30 起)</label>
-                                    <div className="grid grid-cols-4 gap-2">
-                                        {slots.map(s => {
-                                            const occ = bookedSlots.some(b => b.date === selectedDate && b.start < (s.totalMinutes + selectedDuration) && s.totalMinutes < (b.start + b.duration));
-                                            return (
-                                                <button key={s.time} disabled={occ || !selectedDate} onClick={() => setSelectedSlot(s)} className={`py-4 rounded-xl text-xs font-black transition-all ${occ ? 'bg-slate-50 text-slate-200 border-dashed border-slate-100 border cursor-not-allowed' : selectedSlot?.time === s.time ? 'bg-blue-600 text-white shadow-xl scale-105 ring-4 ring-blue-50' : 'bg-white border border-slate-200 text-slate-600 hover:border-blue-400'}`}>
-                                                    {s.time}
-                                                </button>
-                                            );
-                                        })}
-                                    </div>
-                                </div>
-                                <button disabled={!selectedSlot || !userName || isSyncing} onClick={handleBooking} className={`w-full py-6 rounded-[2.5rem] font-black text-xl shadow-2xl transition-all flex items-center justify-center gap-3 ${!selectedSlot || !userName || isSyncing ? 'bg-slate-100 text-slate-300' : 'bg-blue-600 text-white hover:bg-blue-700 shadow-blue-100'}`}>
-                                    {isSyncing ? <i className="fas fa-spinner animate-spin"></i> : '立即確認預約'}
-                                </button>
-                            </div>
-                        ) : (
-                            <div className="p-16 text-center space-y-8 animate-fade-in">
-                                <div className="w-24 h-24 bg-green-50 text-green-500 rounded-full flex items-center justify-center mx-auto shadow-inner"><i className="fas fa-check text-4xl"></i></div>
-                                <h2 className="text-4xl font-black italic tracking-tighter uppercase text-slate-900">Success!</h2>
-                                <p className="text-slate-400 font-bold uppercase tracking-[0.3em] text-[10px]">資料已即時寫入多維表格</p>
-                                <button onClick={() => {setBookingConfirmed(false); setUserName(''); setSelectedSlot(null);}} className="text-slate-300 hover:text-slate-800 font-black text-[10px] tracking-widest uppercase py-4 transition-all">返回首頁</button>
-                            </div>
-                        )}
-                    </div>
 
-                    <div className="bg-slate-50 p-4 border-t border-slate-100 text-center shrink-0">
-                        <p className="text-[8px] text-slate-300 font-black tracking-[0.6em] uppercase">Sky Vision Digital Infrastructure</p>
+                                    <div>
+                                        <label className="text-[10px] font-black text-slate-400 mb-5 block tracking-[0.3em] uppercase italic border-l-4 border-blue-600 pl-3 leading-none">04 / 時段 (18:30 起)</label>
+                                        <div className="grid grid-cols-4 gap-3">
+                                            {slots.map(s => {
+                                                const occ = isOccupied(selectedDate, s.total, selectedDuration);
+                                                return (
+                                                    <button key={s.label} disabled={occ || !selectedDate} onClick={() => setSelectedSlot(s)} className={`py-4 rounded-2xl text-xs font-black transition-all ${occ ? 'bg-slate-50 text-slate-100 border-0 opacity-40 cursor-not-allowed border-dashed border border-slate-200' : selectedSlot?.label === s.label ? 'bg-slate-900 text-white shadow-xl scale-105 ring-4 ring-slate-100' : 'bg-white border border-slate-200 text-slate-600 hover:border-slate-400 hover:shadow-md'}`}>
+                                                        {s.label}
+                                                    </button>
+                                                );
+                                            })}
+                                        </div>
+                                    </div>
+
+                                    <button disabled={!selectedSlot || !userName || isSyncing} onClick={submitBooking} className={`w-full py-6 rounded-[2.5rem] font-black text-xl shadow-2xl transition-all flex items-center justify-center gap-4 ${!selectedSlot || !userName || isSyncing ? 'bg-slate-100 text-slate-300' : 'bg-gradient-to-r from-blue-600 to-indigo-600 text-white hover:brightness-110 active:scale-95 shadow-blue-500/30'}`}>
+                                        {isSyncing ? <i className="fas fa-circle-notch animate-spin text-2xl"></i> : '立即預約按摩時段'}
+                                    </button>
+                                </div>
+                            ) : (
+                                <div className="p-20 text-center space-y-10 animate-fade-in">
+                                    <div className="relative inline-block">
+                                        <div className="w-28 h-28 bg-green-500 text-white rounded-full flex items-center justify-center mx-auto shadow-2xl relative z-10 animate-bounce">
+                                            <i className="fas fa-check text-5xl"></i>
+                                        </div>
+                                        <div className="absolute inset-0 bg-green-500 rounded-full animate-ping opacity-20"></div>
+                                    </div>
+                                    <div>
+                                        <h2 className="text-4xl font-black italic tracking-tighter uppercase text-slate-900">Success!</h2>
+                                        <p className="text-slate-400 font-bold uppercase tracking-[0.4em] text-[9px] mt-6">預約成功，雲端資料庫已即時同步</p>
+                                    </div>
+                                    <button onClick={() => {setBookingConfirmed(false); setUserName(''); setSelectedSlot(null);}} className="text-slate-400 hover:text-blue-600 font-black text-[10px] tracking-widest uppercase transition-all flex items-center justify-center gap-3 mx-auto py-4">
+                                        <i className="fas fa-arrow-left"></i> 返回預約首頁
+                                    </button>
+                                </div>
+                            )}
+                        </div>
+
+                        <div className="bg-slate-50 p-8 border-t border-slate-100 text-center shrink-0">
+                            <p className="text-[7px] text-slate-400 font-black tracking-[0.6em] uppercase leading-relaxed italic">
+                                SKY VISION ENTERPRISE CLOUD INFRASTRUCTURE<br/>
+                                <span className="text-blue-500">Node: {appId}</span> | Single-File System v9.2
+                            </p>
+                        </div>
                     </div>
                 </div>
             );
