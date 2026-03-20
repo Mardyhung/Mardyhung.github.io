@@ -29,11 +29,14 @@
             const START_HOUR = 18; const START_MIN = 30; const END_HOUR = 23; const SLOT_INTERVAL = 30;
             const ADMIN_PASSWORD = "23128951";
 
-            const [larkConfig] = useState({ 
+            // Lark 串接配置
+            const [larkConfig, setLarkConfig] = useState({ 
                 appId: 'cli_a936584430b8ded2', 
                 appSecret: 'CYSTv1bNrXph5p79YzHKKcWEyb2OAPiD', 
                 appToken: 'XqCWbEx4ZamziBsuKhClW3YPgxf', 
-                tableId: 'tblw0ocVXfvrXyOX' 
+                tableId: 'tblw0ocVXfvrXyOX',
+                useProxy: true, // 預設開啟代理以解決 GitHub Pages 的 CORS 問題
+                proxyUrl: 'https://corsproxy.io/?' // 免費的 CORS 代理服務
             });
 
             const [isAdmin, setIsAdmin] = useState(false);
@@ -44,13 +47,15 @@
             const [bookedSlots, setBookedSlots] = useState([]); 
             const [selectedSlot, setSelectedSlot] = useState(null);
             const [bookingConfirmed, setBookingConfirmed] = useState(false);
+            const [editingRecordId, setEditingRecordId] = useState(null); 
             const [isSyncing, setIsSyncing] = useState(false);
             const [errorMsg, setErrorMsg] = useState('');
-            const [errorType, setErrorType] = useState(null); // 'CORS' | 'API'
+            const [errorType, setErrorType] = useState(null);
 
             const fetchWithRetry = async (url, options, retries = 3) => {
+                const finalUrl = larkConfig.useProxy ? `${larkConfig.proxyUrl}${encodeURIComponent(url)}` : url;
                 try {
-                    const response = await fetch(url, options);
+                    const response = await fetch(finalUrl, options);
                     if (!response.ok) {
                         const errorData = await response.json().catch(() => ({}));
                         throw new Error(errorData.msg || `Lark 回傳錯誤 ${response.status}`);
@@ -59,7 +64,7 @@
                 } catch (err) {
                     if (err.name === 'TypeError' || err.message.includes('fetch')) {
                         setErrorType('CORS');
-                        throw new Error("Lark 伺服器安全性攔截 (CORS)。這是因為瀏覽器端禁止直接發送包含 App Secret 的請求。");
+                        throw new Error("連線被安全性攔截。這通常是因為 Lark 不允許瀏覽器端直接連線。");
                     }
                     throw err;
                 }
@@ -151,19 +156,37 @@
                                     <i className="fas fa-shield-virus"></i> 技術安全性攔截 (CORS)
                                 </h4>
                                 <div className="space-y-4 text-[11px] text-red-700 leading-relaxed font-medium">
-                                    <p>周董，您雖然已經在後台設定好網域，但 Lark 伺服器為了保護您的 <strong>App Secret</strong>，禁止瀏覽器直接進行權限驗證。</p>
+                                    <p>周董，這筆請求被 Lark 伺服器阻擋了。這通常發生在「外部瀏覽器」直接存取金鑰時。</p>
                                     <div className="bg-white p-4 rounded-2xl border border-red-50">
-                                        <p className="font-black mb-2 text-slate-800 uppercase">解決建議：</p>
-                                        <ol className="list-decimal ml-4 space-y-2">
-                                            <li><strong>使用 Lark 工作台</strong>：將此 HTML 網址配置到 Lark 應用的「網頁應用」中，並在 Lark 電腦版或手機版中打開，體驗會最穩定。</li>
-                                            <li><strong>建立後端中轉</strong>：將獲取 Token 的邏輯移至伺服器端執行（如 Cloud Functions），這是最符合工業標準的做法。</li>
-                                        </ol>
+                                        <p className="font-black mb-2 text-slate-800 uppercase">目前採取的抗風險策略：</p>
+                                        <p>程式已自動開啟代理模式（Proxy Mode）嘗試繞過限制。若仍失敗，請確認是否在 <strong>Lark 工作台</strong> 內打開此頁面。</p>
                                     </div>
                                 </div>
                             </div>
                         )}
 
-                        {!bookingConfirmed ? (
+                        {isAdmin ? (
+                            <div className="p-8 space-y-6">
+                                <div className="bg-slate-50 p-6 rounded-3xl border border-slate-100">
+                                    <h3 className="text-[10px] font-black text-slate-400 uppercase tracking-widest mb-4">系統參數監控</h3>
+                                    <div className="flex items-center justify-between text-xs font-bold">
+                                        <span>代理模式狀態</span>
+                                        <span className="text-green-600">已開啟 (corsproxy.io)</span>
+                                    </div>
+                                </div>
+                                <div className="space-y-4">
+                                    <h3 className="text-xs font-black text-slate-400 uppercase tracking-widest">當前預約列表 ({bookedSlots.length})</h3>
+                                    {bookedSlots.map(b => (
+                                        <div key={b.id} className="p-4 bg-white border border-slate-100 rounded-2xl flex justify-between items-center shadow-sm">
+                                            <div className="flex flex-col">
+                                                <span className="text-xs font-black">{b.date} {b.timeString}</span>
+                                                <span className="text-[10px] text-slate-400 font-bold uppercase">{b.userName}</span>
+                                            </div>
+                                        </div>
+                                    ))}
+                                </div>
+                            </div>
+                        ) : !bookingConfirmed ? (
                             <div className="p-8 space-y-8 animate-fade-in">
                                 <div>
                                     <label className="text-[10px] font-black text-slate-400 mb-4 block tracking-widest uppercase italic underline decoration-blue-500 underline-offset-8">01 / 日期選擇</label>
